@@ -1,0 +1,206 @@
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# SCEG-HiC(single-cell enhancer gene interactions by integrating prior Hi-C information)
+
+<!-- badges: start -->
+
+<!-- badges: end -->
+
+## Overview
+
+SCEG-HiC predicts interactions between genes and enhancers using
+multi-ome (paired scRNA-seq and scATAC-seq or only scATAC-seq)
+sequencing data and three-dimensional omics data (the bulk average
+Hi-C). The approach uses weighted graphical lasso (wlasso) model, taking
+the average Hi-C data as prior knowledge, to predict cell specific
+interactions between genes and enhancers based on the correlation
+between genes and enhancers.
+
+## Installation
+
+### Required software
+
+SCEG-HiC runs in the [R statistical computing
+environment](https://www.r-project.org/). You will need R version 4.1.0
+or higher, [Bioconductor](https://bioconductor.org/) version 3.14 or
+higher, and Seurat 4.0 or higher to have access to the latest features.
+
+To install Bioconductor, open R and run:
+
+``` r
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+```
+
+Next, install a few Bioconductor dependencies that aren’t automatically
+installed:
+
+``` r
+BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+                       'limma', 'lme4', 'S4Vectors', 'SingleCellExperiment',
+                       'SummarizedExperiment', 'batchelor', 'HDF5Array',
+                       'terra', 'ggrastr','Gviz', 'rtracklayer','GenomeInfoDb','GenomicRanges'))
+```
+
+Installation of other dependencies
+
+- Install Signac pacakge :
+  `devtools::install_github("timoast/signac", ref = "develop")`. Please
+  check
+  [here](https://satijalab.org/signac/articles/install.html#development-version-1)
+  if you encounter any issue.
+- Install Cicero package:
+  `devtools::install_github("cole-trapnell-lab/cicero-release", ref = "monocle3")`.
+  Please check
+  [here](https://cole-trapnell-lab.github.io/cicero-release/docs_m3/#installing-cicero)
+  if you encounter any issue.
+
+Now, you can install the development version of SCEG-HiC from
+[GitHub](https://github.com/) with:
+
+``` r
+# install.packages("devtools")
+devtools::install_github("wuwei77lx/SCEGHiC")
+```
+
+If you wish to install CRAN of SCEG-HiC, execute:
+
+``` r
+# Install released version from CRAN
+install.packages("SCEGHiC")
+```
+
+### Testing the installation
+
+To ensure that SCEG-HiC was installed correctly, start a new R session
+and run:
+
+``` r
+library(SCEGHiC)
+```
+
+## The bulk average Hi-C
+
+The celltypes used by human for averaging are: GM12878, NHEK, HMEC,
+RPE1, THP1, IMR90, HUVEC, HCT116, K562, KBM7. The celltypes used by
+mouse for averaging are: mESC1, mESC2, CH12LX, CH12F3, fiber,
+epithelium, B.
+
+Generate the bulk average Hi-C using the [Activity by Contact
+(ABC)](https://www.nature.com/articles/s41588-019-0538-0) model’s
+`makeAverageHiC.py`.
+
+Average Hi-C data can be downloaded from:
+
+- The human avg HiC file here:
+  <https://www.encodeproject.org/files/ENCFF134PUN/@@download/ENCFF134PUN.bed.gz>
+
+Extract the huamn bulk average Hi-C using the [Activity by Contact
+(ABC)](https://www.nature.com/articles/s41588-019-0538-0) model’s
+`extract_avg_hic.py`.
+
+``` sh
+python workflow/scripts/extract_avg_hic.py --avg_hic_bed_file ../ENCFF134PUN.bed.gz --output_dir ../
+```
+
+- The mouse avg HiC file here:
+  [10.5281/zenodo.14849886](https://zenodo.org/record/14849886)
+
+## Quickstart
+
+This is a basic example which shows you how to solve a common problem:
+
+Aggregated with paired scRNA-seq and scATAC-seq data
+
+``` r
+library(SCEGHiC)
+library(Signac)
+## basic example code
+data(multiomic_small)
+
+# Preprocess data
+SCEGdata <- process_data(multiomic_small, k_neigh = 5, max_overlap = 0.5)
+#> Generating aggregated data
+#> Aggregating cluster 0
+#> Sample cells randomly.
+#> have 11 samples
+#> Aggregating cluster 1
+#> Sample cells randomly.
+#> have 11 samples
+
+gene <- c("TRABD2A", "GNLY", "MFSD6", "CTLA4", "LCLAT1", "NCK2", "GALM", "TMSB10", "ID2", "CXCR4")
+fpath <- system.file("extdata", package = "SCEGHiC")
+
+# Calculate weight
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = gene, averHicPath = fpath)
+#> Successfully obtained 10 TSS loci of genes from chromosome 2.
+#> Calculate weight of  TRABD2A
+#> Calculate weight of  GNLY
+#> Calculate weight of  MFSD6
+#> Calculate weight of  CXCR4
+#> Calculate weight of  CTLA4
+#> Calculate weight of  LCLAT1
+#> Calculate weight of  NCK2
+#> Calculate weight of  ID2
+#> Calculate weight of  GALM
+#> Calculate weight of  TMSB10
+
+# Run model
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = gene)
+#> The predicted genes are 10 in total.
+#> Run model of  TRABD2A
+#> Run model of  GNLY
+#> Run model of  MFSD6
+#> Run model of  CXCR4
+#> Run model of  CTLA4
+#> Run model of  LCLAT1
+#> Run model of  NCK2
+#> Run model of  ID2
+#> Run model of  GALM
+#> Run model of  TMSB10
+
+# Visualize the links
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "CTLA4", cutoff = 0.01, gene_anno = NULL)
+```
+
+<img src="man/figures/README-example1-1.png" width="100%" />
+
+``` r
+
+# Coverage plot and visualize the links of CTLA4
+fpath <- system.file("extdata", "multiomic_small_atac_fragments.tsv.gz", package = "SCEGHiC")
+frags <- CreateFragmentObject(path = fpath, cells = colnames(multiomic_small))
+#> Computing hash
+Fragments(multiomic_small) <- frags
+coverPlot(multiomic_small, focus_gene = "CTLA4", species = "Homo sapiens", genome = "hg38", assay = "peaks", SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.01)
+#> Warning in .merge_two_Seqinfo_objects(x, y): The 2 combined objects have no sequence levels in common. (Use
+#>   suppressWarnings() to suppress this warning.)
+```
+
+<img src="man/figures/README-example1-2.png" width="100%" />
+
+See [documentation website](https://wuwei77lx.github.io/SCEGHiC/) for
+more information!
+
+## Example
+
+For more information about how this package has been used with real
+data, please check the following links:
+
+- [SCEG-HiC on paired scRNA-seq and scATAC-seq data of
+  PBMC-aggregate](https://wuwei77lx.github.io/SCEGHiC/articles/pbmc_multiomic_aggregrate.html)
+
+- [SCEG-HiC on paired scRNA-seq and scATAC-seq data of
+  PBMC-CD4T](https://wuwei77lx.github.io/SCEGHiC/articles/pbmc_multiomic_CD4T.html)
+
+- [SCEG-HiC on paired scRNA-seq and scATAC-seq data of mouse
+  skin-aggregate](https://wuwei77lx.github.io/SCEGHiC/articles/mouse_skin_multiomic_aggregrate.html)
+
+- [SCEG-HiC on only scATAC-seq data of human COVID
+  19-Mono](https://wuwei77lx.github.io/SCEGHiC/articles/human_covid_19_scATAC_seq_mono.html)
+
+## Help
+
+If you have any problems, comments or suggestions, please contact us at
+XuanLiang (<liangxuan2022@sinh.ac.cn>).
