@@ -1,0 +1,27 @@
+{
+    "id": "F78F0F49",
+    "path": "~/SCEG/SCEGHiC/R/preprocessing.R",
+    "project_path": "R/preprocessing.R",
+    "type": "r_source",
+    "hash": "170078233",
+    "contents": "",
+    "dirty": false,
+    "created": 1737287081642.0,
+    "source_on_save": false,
+    "relative_order": 4,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "465,24",
+        "scrollLine": "458",
+        "ignored_words": "celltype\n"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737459953,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737459953612,
+    "read_only": false,
+    "read_only_alternatives": []
+}

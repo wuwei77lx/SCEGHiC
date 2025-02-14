@@ -1,0 +1,27 @@
+{
+    "id": "961BFAD5",
+    "path": "~/SCEG/SCEGHiC/vignettes/human_covid_19_scATAC_seq_mono.Rmd",
+    "project_path": "vignettes/human_covid_19_scATAC_seq_mono.Rmd",
+    "type": "r_markdown",
+    "hash": "28465079",
+    "contents": "",
+    "dirty": false,
+    "created": 1737513884789.0,
+    "source_on_save": false,
+    "relative_order": 6,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "55,27",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737513976,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737513976195,
+    "read_only": false,
+    "read_only_alternatives": []
+}

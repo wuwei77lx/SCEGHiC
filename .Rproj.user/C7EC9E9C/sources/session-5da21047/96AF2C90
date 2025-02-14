@@ -1,0 +1,27 @@
+{
+    "id": "96AF2C90",
+    "path": "~/SCEG/SCEGHiC/tests/testthat/test-aggregate.R",
+    "project_path": "tests/testthat/test-aggregate.R",
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": true,
+    "created": 1737535754764.0,
+    "source_on_save": false,
+    "relative_order": 13,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "37,169",
+        "scrollLine": "14",
+        "docOutlineVisible": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737535839,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737536213985,
+    "read_only": false,
+    "read_only_alternatives": []
+}
