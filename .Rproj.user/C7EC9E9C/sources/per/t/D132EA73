@@ -1,0 +1,26 @@
+{
+    "id": "D132EA73",
+    "path": "~/SCEG/SCEGHiC/renv.lock",
+    "project_path": "renv.lock",
+    "type": "json",
+    "hash": "3361405010",
+    "contents": "",
+    "dirty": false,
+    "created": 1737554744955.0,
+    "source_on_save": false,
+    "relative_order": 10,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "2709,13",
+        "scrollLine": "2707"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1736827889,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1736827889,
+    "read_only": false,
+    "read_only_alternatives": []
+}

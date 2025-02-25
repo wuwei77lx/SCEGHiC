@@ -1,0 +1,26 @@
+{
+    "id": "CB80BDDC",
+    "path": "~/SCEG/SCEGHiC/R/weight.R",
+    "project_path": "R/weight.R",
+    "type": "r_source",
+    "hash": "119693641",
+    "contents": "",
+    "dirty": false,
+    "created": 1737555580933.0,
+    "source_on_save": false,
+    "relative_order": 11,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "137,101",
+        "scrollLine": "130"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737542518,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737542518,
+    "read_only": false,
+    "read_only_alternatives": []
+}

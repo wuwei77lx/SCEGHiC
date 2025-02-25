@@ -1,0 +1,26 @@
+{
+    "id": "06F8F22F",
+    "path": "~/SCEG/SCEGHiC/R/model.R",
+    "project_path": "R/model.R",
+    "type": "r_source",
+    "hash": "4136722520",
+    "contents": "",
+    "dirty": false,
+    "created": 1737519050576.0,
+    "source_on_save": false,
+    "relative_order": 10,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "27,7",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737526147,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737526147,
+    "read_only": false,
+    "read_only_alternatives": []
+}

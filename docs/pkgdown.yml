@@ -1,0 +1,12 @@
+pandoc: 3.6.2
+pkgdown: 2.1.1
+pkgdown_sha: ~
+articles:
+  human_covid_19_scATAC_seq_mono: human_covid_19_scATAC_seq_mono.html
+  mouse_skin_multiomic_aggregate: mouse_skin_multiomic_aggregate.html
+  pbmc_multiomic_aggregate: pbmc_multiomic_aggregate.html
+  pbmc_multiomic_CD4T: pbmc_multiomic_CD4T.html
+last_built: 2025-02-25T09:58Z
+urls:
+  reference: https://wuwei77lx.github.io/SCEGHiC/reference
+  article: https://wuwei77lx.github.io/SCEGHiC/articles
