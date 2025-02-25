@@ -1,4 +1,3 @@
-
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
 # SCEG-HiC(single-cell enhancer gene interactions by integrating priori Hi-C information)
