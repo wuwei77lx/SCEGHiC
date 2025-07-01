@@ -1,0 +1,104 @@
+---
+title: "SCEG-HiC on paired scATAC-seq/scRNA-seq data of PBMC-CD4T"
+author: "XuanLiang"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/picb/bigdata/project/liangxuan/data/model/model/data/human/pbmc")
+options(future.globals.maxSize = 20 * 1024^3)
+```
+
+In this vignette, we demonstrate the capability of SCEG-HiC to infer enhancer–gene links by applying it to paired scATAC-seq/RNA-seq data. Specifically, we use a publicly available 10x Genomics Multiome dataset from human PBMCs and select only CD4+ T cells for processing using the single-cell retention approach.
+
+
+To begin, we require a Seurat object containing paired scATAC-seq/scRNA-seq data. For this demonstration, we utilize publicly available multi-omics dataset from human PBMCs, processed as described in the [SCEG-HiC on paired scATAC-seq/RNA-seq data of PBMC (aggregation)](https://wuwei77lx.github.io/SCEGHiC/articles/PBMC_multiomic_aggregation.html) The Seurat object file, ```PBMC_multiomic.rds``` file is also available at [10.5281/zenodo.14849886](https://zenodo.org/record/14849886).
+
+**Note**: Due to the stochastic nature of ```SCTransform```, particularly in generating ```scale.data```, the UMAP embedding produced by re-running the code may differ slightly from that in the provided ```PBMC_multiomic.rds``` file.
+
+The implementation of SCEG-HiC is seamlessly compatible with the standard workflow of the Seurat/Signac packages. The SCEG-HiC pipeline consists of the following two main steps:
+
+* **Infer enhancer–gene links**: Apply the SCEG-HiC model to the processed Seurat object, incorporating human bulk average Hi-C data as a chromatin conformation prior to enhance the inference of enhancer–gene links.
+
+* **Visualize enhancer–gene links**: Generate graphical outputs such as arc diagrams and coverage plots to visualize predicted enhancer–gene links.
+
+## Load the required libraries
+```{r message=FALSE, warning=FALSE}
+library(SCEGHiC)
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+```
+
+## Infer enhancer–gene links 
+
+### Preprocess data
+
+Here, we use the single-cell retention approach to handle paired scATAC-seq/RNA-seq data. The scATAC-seq counts are normalized using TF-IDF. We specifically select CD4+ T cells with paired scATAC-seq/RNA-seq data.
+
+```{r}
+# Load processed multi-omics PBMC data
+pbmc <- readRDS("PBMC_multiomic.rds")
+
+# Prepare data for SCEG-HiC analysis
+# Here, data is processed without aggregation, focusing on the CD4+ T cell type
+SCEGdata <- process_data(pbmc, aggregate = FALSE, celltype = "CD4 T", rna_assay = "SCT",atacbinary=FALSE)
+```
+
+### Calculate weight
+
+Calculating weights with SCEG-HiC can be time-consuming, especially as the number of selected genes increases. To facilitate this process, SCEG-HiC provides downloadable average Hi-C datasets for both human and mouse (detail [here](https://wuwei77lx.github.io/SCEGHiC/index.html#the-bulk-average-hi-c)). In this case, we select the human average Hi-C data as prior information to calculate enhancer-gene interaction weights.
+
+As an example, we calculate Hi-C weights focusing on the CD4+ T cell marker gene GLB1.
+
+```{r }
+# Alternatively, calculate Hi-C weights for the specific CD4+ T cell marker gene GLB1
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = "GLB1", averHicPath = "/picb/bigdata/project/liangxuan/data/human_contact/AvgHiC")
+```
+
+### Run model
+
+SCEG-HiC employs the wglasso method to infer enhancer-gene links by integrating processed single-cell multi-omics data and normalized bulk average Hi-C contact matrices. The bulk Hi-C matrix is normalized using rank score to improve accuracy. In this example, we run the model focusing on CD4+ T cell marker gene GLB1 to identify their putative enhancer links.
+
+```{r }
+# Example: Run the model focused on Basal cell marker GLB1
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = "GLB1")
+```
+
+## Visualize enhancer–gene links 
+
+### Arc plot visualization of enhancer-gene links
+
+Arc plot visualizes the predicted links between enhancers and target genes as arcs connecting genomic regions, highlighting spatial chromatin interactions inferred by SCEG-HiC.
+
+Arc plot visualization of enhancer-gene links for GLB1.
+
+```{r,fig.width = 8, fig.height = 5,message=FALSE,warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Download and prepare gene annotation data
+temp <- tempfile()
+download.file("https://hgdownload2.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.refGene.gtf.gz", temp)
+gene_anno <- rtracklayer::readGFF(temp)
+unlink(temp)
+
+# Rename some columns to match requirements
+gene_anno$chromosome <- gene_anno$seqid
+gene_anno$gene <- gene_anno$gene_id
+gene_anno$transcript <- gene_anno$transcript_id
+gene_anno$symbol <- gene_anno$gene_name
+
+# Arc plot visualization of enhancer-gene links for GLB1
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "GLB1", cutoff = 0.001, gene_anno = gene_anno)
+```
+
+<details>
+  <summary>**Session Info**</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>

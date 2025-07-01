@@ -1,0 +1,377 @@
+---
+title: "SCEG-HiC on paired scATAC-seq/RNA-seq data of PBMC (aggregation)"
+author: "XuanLiang"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/picb/bigdata/project/liangxuan/data/model/model/data/human/pbmc")
+options(future.globals.maxSize = 20 * 1024^3)
+```
+
+In this vignette, we demonstrate the capability of SCEG-HiC to infer enhancer–gene links by applying it to paired scATAC-seq/RNA-seq data. Specifically, we use a publicly available 10x Genomics Multiome dataset from human peripheral blood mononuclear cells (PBMCs), and process the data using the aggregation approach.
+
+The implementation of SCEG-HiC is seamlessly compatible with the standard workflow of the Seurat/Signac packages. The SCEG-HiC pipeline consists of the following three main steps:
+
+* **Set up the Seurat object**: Prepare and preprocess paired single-cell multi-omics data using the Seurat and Signac framework.
+
+* **Infer enhancer–gene links**: Apply the SCEG-HiC model to the processed Seurat object, incorporating human bulk average Hi-C data as a chromatin conformation prior to enhance the inference of enhancer–gene links.
+
+* **Visualize enhancer–gene links**: Generate graphical outputs such as arc diagrams and coverage plots to visualize predicted enhancer–gene links.
+
+
+<details>
+  <summary>**View data download code**</summary>
+
+You can download the required data by running the following commands in a shell:
+
+```{sh eval=FALSE}
+wget https://cf.10xgenomics.com/samples/cell-arc/1.0.0/pbmc_granulocyte_sorted_10k/pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5
+wget https://cf.10xgenomics.com/samples/cell-arc/1.0.0/pbmc_granulocyte_sorted_10k/pbmc_granulocyte_sorted_10k_atac_fragments.tsv.gz
+wget https://cf.10xgenomics.com/samples/cell-arc/1.0.0/pbmc_granulocyte_sorted_10k/pbmc_granulocyte_sorted_10k_atac_fragments.tsv.gz.tbi
+```
+
+</details>
+
+## Load the required libraries
+```{r message=FALSE, warning=FALSE}
+library(SCEGHiC)
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+library(hdf5r)
+```
+
+## Set up the Seurat Object
+
+To facilitate easy exploration, ```PBMC_multiomic.rds``` file is also available at [10.5281/zenodo.14849886](https://zenodo.org/record/14849886).
+
+**Note**: Due to the stochastic nature of ```SCTransform```, particularly in generating ```scale.data```, the UMAP embedding produced by re-running the code may differ slightly from that in the provided ```PBMC_multiomic.rds``` file.
+
+### Generation of a multi-omics Seurat object with RNA and ATAC data
+
+Construct a Seurat object combining RNA expression and ATAC-seq chromatin accessibility data and genome features from hg38.
+
+```{r message=FALSE, warning=FALSE}
+# Load RNA and ATAC data from 10X Genomics output files
+counts <- Read10X_h5("pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
+fragpath <- "pbmc_granulocyte_sorted_10k_atac_fragments.tsv.gz"
+```
+
+```{r message=FALSE, warning=FALSE}
+# Get gene annotations from EnsDb.Hsapiens.v86
+# Add "chr" prefix to chromosome names to match peak naming conventions
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+seqlevels(annotation) <- paste0("chr", seqlevels(annotation))
+
+# Create a Seurat object containing the RNA count matrix (assay named "RNA")
+pbmc <- CreateSeuratObject(
+  counts = counts$`Gene Expression`,
+  assay = "RNA"
+)
+
+# Create an ATAC assay using the filtered peak counts and annotations, and add it to the Seurat object
+pbmc[["ATAC"]] <- CreateChromatinAssay(
+  counts = counts$Peaks,
+  sep = c(":", "-"),
+  fragments = fragpath,
+  annotation = annotation
+)
+```
+
+```{r}
+# Display summary of the Seurat object
+pbmc
+```
+
+### Quality control and filtering
+
+Calculate QC metrics (RNA counts, ATAC counts, nucleosome signal, TSS enrichment) and filter low-quality cells using defined thresholds.
+
+```{r fig.width = 18, fig.height = 6,message=FALSE, warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Set default assay to ATAC for ATAC-seq quality metrics calculation
+DefaultAssay(pbmc) <- "ATAC"
+
+# Calculate nucleosome signal score, which reflects nucleosome positioning
+pbmc <- NucleosomeSignal(pbmc)
+
+# Calculate Transcription Start Site (TSS) enrichment score for each cell, a metric for ATAC-seq data quality
+pbmc <- TSSEnrichment(pbmc)
+
+# Plot violin plots for QC metrics:
+# - RNA counts per cell (nCount_RNA)
+# - ATAC counts per cell (nCount_ATAC)
+# - TSS enrichment score (TSS.enrichment)
+# - Nucleosome signal score (nucleosome_signal)
+VlnPlot(
+  object = pbmc,
+  features = c("nCount_RNA", "nCount_ATAC", "TSS.enrichment", "nucleosome_signal"),
+  ncol = 4,
+  pt.size = 0
+)
+```
+
+```{r}
+# Filter out low-quality cells based on multiple QC thresholds
+pbmc <- subset(
+  x = pbmc,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 25000 &
+    nCount_ATAC > 1000 &
+    nCount_RNA > 1000 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1
+)
+
+# Print summary of the filtered Seurat object
+pbmc
+```
+
+
+### Peak calling and quantification
+
+Call peaks, filter, count fragments per peak, and add to Seurat object.
+
+```{r}
+# Call peaks using MACS2 from the fragments in the Seurat object
+peaks <- CallPeaks(pbmc)
+
+# Remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks <- keepStandardChromosomes(peaks, pruning.mode = "coarse")
+peaks <- subsetByOverlaps(x = peaks, ranges = blacklist_hg38_unified, invert = TRUE)
+
+# Quantify counts of fragments overlapping each peak for each cell, creating a peak-by-cell count matrix
+macs2_counts <- FeatureMatrix(
+  fragments = Fragments(pbmc),
+  features = peaks,
+  cells = colnames(pbmc)
+)
+
+# Create a new chromatin assay based on MACS2-called peaks and add it to the Seurat object
+pbmc[["peaks"]] <- CreateChromatinAssay(
+  counts = macs2_counts,
+  fragments = fragpath,
+  annotation = annotation
+)
+
+# Print summary of the updated Seurat object
+pbmc
+```
+
+### RNA analysis
+
+Normalize RNA data with SCTransform and perform PCA for dimensionality reduction.
+
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set the default assay to "RNA" for RNA-based analysis
+DefaultAssay(pbmc) <- "RNA"
+
+# Perform normalization and variance stabilization using SCTransform
+# This replaces traditional log-normalization and identifies variable features
+pbmc <- SCTransform(pbmc)
+
+# Run Principal Component Analysis (PCA) on the normalized data
+# PCA reduces dimensionality while preserving major sources of variation
+pbmc <- RunPCA(pbmc)
+```
+
+### ATAC analysis
+
+Identify highly accessible peaks and perform dimensionality reduction using TF-IDF and SVD (LSI).
+
+```{r message=FALSE, warning=FALSE}
+# Set the default assay to "peaks" (i.e., the MACS2-called peak matrix)
+DefaultAssay(pbmc) <- "peaks"
+
+# Identify top features (peaks) based on accessibility; only keep peaks present in at least 5 cells
+pbmc <- FindTopFeatures(pbmc, min.cutoff = 5)
+
+# Perform Term Frequency-Inverse Document Frequency (TF-IDF) normalization
+pbmc <- RunTFIDF(pbmc)
+
+# Perform dimensionality reduction using Singular Value Decomposition (SVD), also referred to as Latent Semantic Indexing (LSI) in this context
+pbmc <- RunSVD(pbmc)
+```
+
+### Cell type annotation and integration analysis
+
+We use an annotated PBMC reference dataset from [Hao et al. (2020)](https://doi.org/10.1016/j.cell.2021.04.048) to perform cell type annotation and integration. The reference dataset is publicly available at:
+https://atlas.fredhutch.org/data/nygc/multimodal/pbmc_multimodal.h5seurat.
+
+```{r message=FALSE, warning=FALSE}
+# Load necessary library for working with Seurat h5Seurat format
+library(SeuratDisk)
+
+# Load multimodal PBMC reference dataset (processed with spca and SCT)
+reference <- LoadH5Seurat("pbmc_multimodal.h5seurat", assays = list("SCT" = "counts"), reductions = "spca")
+
+# Ensure the reference object is compatible with current Seurat version
+reference <- UpdateSeuratObject(reference)
+
+# Set the default assay for the query object to SCT (if applicable)
+DefaultAssay(pbmc) <- "SCT"
+
+# Identify anchors between the reference and the query using spca
+transfer_anchors <- FindTransferAnchors(
+  reference = reference,
+  query = pbmc,
+  normalization.method = "SCT",
+  reference.reduction = "spca",
+  recompute.residuals = FALSE,
+  dims = 1:50
+)
+
+# Transfer cell type annotations from reference to query based on anchors
+predictions <- TransferData(
+  anchorset = transfer_anchors,
+  refdata = reference$celltype.l1,
+  weight.reduction = pbmc[["pca"]],
+  dims = 1:50
+)
+
+# Store the predicted cell types in the metadata of the query object
+pbmc <- AddMetaData(
+  object = pbmc,
+  metadata = predictions
+)
+
+# Set cell identities to the predicted labels
+Idents(pbmc) <- "predicted.id"
+
+# Set the display order of cell types
+levels(pbmc) <- c("CD4 T", "CD8 T", "Mono", "NK", "B", "DC", "other T", "other")
+```
+
+Using [Seurat v4](https://doi.org/10.1016/j.cell.2021.04.048)’s weighted nearest neighbor method, we integrate gene expression and chromatin accessibility into a joint neighbor graph and create a unified UMAP embedding combining RNA and ATAC data.
+
+```{r fig.width = 6, fig.height = 6,message=FALSE, warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Build a multimodal nearest-neighbor graph using PCA from RNA and LSI from ATAC
+pbmc <- FindMultiModalNeighbors(
+  object = pbmc,
+  reduction.list = list("pca", "lsi"),
+  dims.list = list(1:50, 2:40),
+  modality.weight.name = "RNA.weight",
+  verbose = TRUE
+)
+
+# Generate a joint UMAP embedding using the WNN graph
+# The embedding combines information from both RNA and ATAC modalities
+pbmc <- RunUMAP(
+  object = pbmc,
+  nn.name = "weighted.nn",
+  assay = "RNA",
+  verbose = TRUE
+)
+
+DimPlot(pbmc, label = TRUE, repel = TRUE, reduction = "umap") + NoLegend()
+```
+
+```{r include=FALSE}
+# Save the integrated Seurat object for future use
+saveRDS(pbmc, file = "PBMC_multiomic.rds")
+```
+
+## Infer enhancer–gene links 
+
+### Preprocess data
+
+When preprocessing data with SCEG-HiC, you can choose either aggregation or single-cell retention approach, and use either paired scATAC-seq/RNA-seq or scATAC-seq data alone. Here, we process paired scATAC-seq/RNA-seq data stored in a Seurat object using the aggregation approach. By default, the scATAC-seq counts are binarized to indicate the presence or absence of chromatin accessibility at each peak.
+
+```{r}
+# Prepare input data for SCEG-HiC analysis
+# This function processes paired scATAC-seq/RNA-seq data stored in a Seurat object
+SCEGdata <- process_data(pbmc, max_overlap = 0.5)
+```
+
+### Calculate weight
+
+Calculating weights with SCEG-HiC can be time-consuming, especially as the number of selected genes increases. To facilitate this process, SCEG-HiC provides downloadable average Hi-C datasets for both human and mouse (detail [here](https://wuwei77lx.github.io/SCEGHiC/index.html#the-bulk-average-hi-c)). In this case, we select the human average Hi-C data as prior information to calculate enhancer-gene links weights.
+
+<details>
+  <summary>**Select  highly variable features**</summary>
+  
+You can focus on the top 3000 highly variable genes identified by SCTransform normalization:
+
+```{r eval=FALSE}
+# Extract highly variable genes
+gene <- pbmc@assays[["SCT"]]@var.features
+
+# Calculate Hi-C weights for these genes using human average Hi-C data
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = gene, averHicPath = "/picb/bigdata/project/liangxuan/data/human_contact/AvgHiC")
+```
+
+</details>
+
+As an example, we calculate Hi-C weights focusing on PDK1, a key regulator of T cell development and activation.
+
+```{r }
+# Alternatively, calculate Hi-C weights for PDK1
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = "PDK1", averHicPath = "/picb/bigdata/project/liangxuan/data/human_contact/AvgHiC")
+```
+
+### Run model
+
+SCEG-HiC employs the wglasso method to infer enhancer-gene links by integrating processed single-cell multi-omics data and normalized bulk average Hi-C contact matrices. The bulk Hi-C matrix is normalized using rank score to improve accuracy. In this example, we run the model focusing on genes PDK1 to identify their putative enhancer links.
+
+```{r} 
+# Example: Run the model focused on PDK1
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = "PDK1")
+```
+
+## Visualize enhancer–gene links 
+
+### Arc plot visualization of enhancer-gene links
+
+Arc plot visualizes the predicted links between enhancers and target genes as arcs connecting genomic regions, highlighting spatial chromatin interactions inferred by SCEG-HiC.
+
+Arc plot visualization of enhancer-gene links for PDK1.
+
+```{r,fig.width = 8, fig.height = 5,message=FALSE,warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Download and prepare gene annotation data
+temp <- tempfile()
+download.file("https://hgdownload2.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.refGene.gtf.gz", temp)
+gene_anno <- rtracklayer::readGFF(temp)
+unlink(temp)
+
+# Rename some columns to match requirements
+gene_anno$chromosome <- gene_anno$seqid
+gene_anno$gene <- gene_anno$gene_id
+gene_anno$transcript <- gene_anno$transcript_id
+gene_anno$symbol <- gene_anno$gene_name
+
+# Arc plot visualization of enhancer-gene links for PDK1
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "PDK1", cutoff = 0.01, gene_anno = gene_anno)
+```
+
+### Coverage plot visualization of enhancer-gene links with Hi-C (or eQTL) validation
+
+Coverage Plot visualizes chromatin accessibility around a target gene, including Hi-C interactions, scATAC-seq signals, aggregated ATAC-RNA correlations, eQTL SNPs, and enhancer–gene links predicted by SCEG-HiC. This facilitates intuitive comparison of regulatory interactions across multiple data layers.
+
+Here, the ground truth for CD8+ T cells is obtained from the [ENCODE database](https://www.encodeproject.org/files/ENCFF063KHP/@@download/ENCFF063KHP.hic), and the correlation is calculated as the Pearson correlation coefficient between each gene and its candidate enhancers. The detailed code for this analysis is publicly available at the [GitHub repository](https://github.com/wuwei77lx/compare_model).
+
+
+Coverage plot and visualize the links of PDK1.
+
+```{r, fig.width = 15.5, fig.height = 7,warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Load the truth of CD8+ T data
+truth_CD8 <- readRDS("truth_CD8.rds")
+
+## Load correlation data
+correlation <- readRDS("correlation_CD8.rds")
+
+# Coverage plot and visualize the links of PDK1
+coverPlot(pbmc, focus_gene = "PDK1", species = "Homo sapiens", genome = "hg38", assay = "peaks", HIC_Result = truth_CD8, SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.01, correlation = correlation, cells = c("CD4 T", "CD8 T"))
+```
+
+<details>
+  <summary>**Session Info**</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>

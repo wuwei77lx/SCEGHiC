@@ -1,0 +1,417 @@
+---
+title: "SCEG-HiC on paired scATAC-seq/RNA-seq data of mouse skin (aggregation)"
+author: "XuanLiang"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/picb/bigdata/project/liangxuan/data/model/model/data/mouse/skin")
+options(future.globals.maxSize = 20 * 1024^3)
+```
+
+In this vignette, we demonstrate the capability of SCEG-HiC to infer enhancer–gene links by applying it to paired scATAC-seq/RNA-seq data. Specifically, we use a publicly available SHARE-seq dataset for mouse skin and process the data using the aggregation approach.
+
+The implementation of SCEG-HiC is seamlessly compatible with the standard workflow of the Seurat/Signac packages. The SCEG-HiC pipeline consists of the following three main steps:
+
+* **Set up the Seurat object**: Prepare and preprocess paired single-cell multi-omics data using the Seurat and Signac framework.
+
+* **Infer enhancer–gene links**: Apply the SCEG-HiC model to the processed Seurat object, incorporating mouse bulk average Hi-C data as a chromatin conformation prior to enhance the inference of enhancer–gene links.
+
+* **Visualize enhancer–gene links**: Generate graphical outputs such as arc diagrams and coverage plots to visualize predicted enhancer–gene links.
+
+<details>
+  <summary>**View data download code**</summary>
+
+You can download the required data from [GSE140203](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE140203) by running the following commands in a shell:
+
+
+```{sh eval=FALSE}
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM4156nnn/GSM4156597/suppl/GSM4156597%5Fskin.late.anagen.peaks.bed.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM4156nnn/GSM4156597/suppl/GSM4156597%5Fskin.late.anagen.barcodes.txt.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM4156nnn/GSM4156597/suppl/GSM4156597%5Fskin.late.anagen.counts.txt.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM4156nnn/GSM4156597/suppl/GSM4156597%5Fskin%5Fcelltype.txt.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM4156nnn/GSM4156608/suppl/GSM4156608%5Fskin.late.anagen.rna.counts.txt.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM4156nnn/GSM4156597/suppl/GSM4156597%5Fskin.late.anagen.atac.fragments.bed.gz
+```
+
+The SHARE-seq dataset requires preprocessing to obtain the fragment file needed for downstream analysis. You can generate this file by running the following commands in a shell:
+
+```{sh eval=FALSE}
+# Decompress the original gzipped fragment file
+gunzip GSM4156597_skin.late.anagen.atac.fragments.bed.gz
+
+# Replace all commas with dots to fix formatting issues
+sed -i "s/,/./g" GSM4156597_skin.late.anagen.atac.fragments.bed
+
+# Sort the BED file by chromosome (version sort), start, and end; count unique occurrences; rearrange columns to place counts last; compress output with bgzip
+sort -k1,1V -k2,2n -k3,3n GSM4156597_skin.late.anagen.atac.fragments.bed | uniq -c | awk '{print $2,$3,$4,$5,$1}' OFS="\t" | bgzip -c > GSM4156597_skin.late.anagen.atac.fragments.mybed.gz
+
+# Index the compressed BED file using tabix for fast access during downstream analysis
+# Before indexing, make sure tabix is installed. You can install it via Conda: conda install bioconda::tabix
+tabix -0 -p bed GSM4156597_skin.late.anagen.atac.fragments.mybed.gz
+```
+
+</details>
+
+## Load the required libraries
+```{r message=FALSE, warning=FALSE}
+library(SCEGHiC)
+library(Seurat)
+library(Signac)
+library(EnsDb.Mmusculus.v79) # Annotation for mouse skin
+library(dplyr)
+library(Matrix)
+library(GenomicRanges)
+library(ggplot2)
+```
+
+## Set up the Seurat Object
+
+To facilitate easy exploration, ```mouse_skin_multiomic.rds``` file is also available at [10.5281/zenodo.14849886](https://zenodo.org/record/14849886).
+
+**Note**: Due to the stochastic nature of ```SCTransform```, particularly in generating ```scale.data```, the UMAP embedding produced by re-running the code may differ slightly from that in the provided ```mouse_skin_multiomic.rds``` file.
+
+### Load and preprocess SHARE-seq skin multi-omics data
+
+Load RNA and ATAC count matrices from the SHARE-seq skin multi-omic dataset, align barcodes with original cell type annotations, and convert ATAC peak coordinates into genomic ranges for downstream integrative analysis.
+
+```{r message=FALSE, warning=FALSE}
+# Load the required RNA and ATAC data
+con <- gzfile("GSM4156597_skin_celltype.txt.gz", "rt")
+ct <- read.table(con, header = TRUE, sep = "\t")
+close(con)
+# Columns in 'ct':
+#  - First: ATAC barcode
+#  - Second: RNA barcode
+#  - Third: Annotated cell type
+
+# Load the RNA count matrix (genes × cells)
+rna.count <- read.table("GSM4156608_skin.late.anagen.rna.counts.txt.gz", header = T, row.names = 1)
+
+# Match and reorder RNA counts to cell type annotation
+any(is.na(match(ct$rna.bc, colnames(rna.count)))) # Check for missing matches
+rna.count <- rna.count[, match(ct$rna.bc, colnames(rna.count))]
+
+# Rename RNA count matrix columns to ATAC barcodes for integration
+colnames(rna.count) <- ct$atac.bc 
+
+# Read ATAC barcodes (should match RNA barcodes)
+peak.barcodes <- scan("GSM4156597_skin.late.anagen.barcodes.txt.gz", what = "")
+all(ct$rna.bc == peak.barcodes)
+
+# Read ATAC peak matrix in Matrix Market format
+peak.count <- readMM("GSM4156597_skin.late.anagen.counts.txt.gz")
+dim(peak.count) # Peak × cell dimensions
+
+# Load peak coordinates and convert to GRanges object
+peak.bed <- read.delim("GSM4156597_skin.late.anagen.peaks.bed.gz", header = FALSE)
+peak.granges <- GRanges(seqnames = peak.bed$V1, ranges = IRanges(st = peak.bed$V2, end = peak.bed$V3))
+
+# Assign row and column names to the peak count matrix
+rownames(peak.count) <- paste(peak.granges)
+colnames(peak.count) <- ct$atac.bc
+```
+
+### Generation of a multi-omics Seurat object with RNA and ATAC data
+
+Construct a Seurat object combining RNA expression and ATAC-seq chromatin accessibility data, annotated with cell types based on the original study and genome features from mm10.
+
+```{r message=FALSE, warning=FALSE}
+# Create a Seurat object containing the RNA count matrix (assay named "RNA")
+skin <- CreateSeuratObject(counts = rna.count, assay = "RNA")
+
+# Filter peaks to keep only those on standard chromosomes,
+# removing any peaks from non-standard or unplaced contigs
+grange.use <- seqnames(peak.granges) %in% standardChromosomes(peak.granges)
+peak.count <- peak.count[as.vector(grange.use), ]
+peak.granges <- peak.granges[as.vector(grange.use)]
+
+# Get gene annotations from EnsDb.Mmusculus.v79
+# Add "chr" prefix to chromosome names to match peak naming conventions
+annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
+seqlevels(annotations) <- paste0("chr", seqlevels(annotations))
+genome(annotations) <- "mm10"
+
+# Filter out peaks detected in fewer than 10 cells
+peak.count <- peak.count[rowSums(peak.count) > 10, ]
+
+# Specify the path to the ATAC-seq fragments file
+fragpath <- "GSM4156597_skin.late.anagen.atac.fragments.mybed.gz"
+
+# Create an ATAC assay using the filtered peak counts and annotations, and add it to the Seurat object
+skin[["ATAC"]] <- CreateChromatinAssay(
+  counts = peak.count,
+  sep = c(":", "-"),
+  fragments = fragpath,
+  genome = "mm10",
+  annotation = annotations
+)
+
+# Annotate cell types for each cell in the Seurat object based on the 'ct' table, matching cell names from the Seurat object with those in 'ct'
+skin$celltype <- ct[match(colnames(skin), ct[, 1]), 3]
+```
+
+```{r}
+# Print summary of the filtered Seurat object
+skin
+```
+
+
+### Quality control and filtering
+
+Calculate QC metrics (RNA counts, ATAC counts, mitochondrial percentage, nucleosome signal, TSS enrichment) and filter low-quality cells using defined thresholds.
+
+```{r fig.width = 18, fig.height = 6,  message=FALSE, warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Calculate the percentage of mitochondrial gene counts for each cell
+# Mitochondrial genes typically start with "MT-"
+skin[["percent.mt"]] <- PercentageFeatureSet(skin, pattern = "^MT-")
+
+# Set default assay to ATAC for ATAC-seq quality metrics calculation
+DefaultAssay(skin) <- "ATAC"
+
+# Calculate nucleosome signal score, which reflects nucleosome positioning
+skin <- NucleosomeSignal(skin)
+
+# Calculate Transcription Start Site (TSS) enrichment score for each cell, a metric for ATAC-seq data quality
+skin <- TSSEnrichment(skin)
+
+# Plot violin plots for QC metrics:
+# - RNA counts per cell (nCount_RNA)
+# - ATAC counts per cell (nCount_ATAC)
+# - TSS enrichment score (TSS.enrichment)
+# - Nucleosome signal score (nucleosome_signal)
+VlnPlot(
+  object = skin,
+  features = c("nCount_RNA", "nCount_ATAC", "TSS.enrichment", "nucleosome_signal"),
+  ncol = 4,
+  pt.size = 0
+)
+```
+
+
+```{r}
+# Filter out low-quality cells based on multiple QC thresholds
+skin <- subset(
+  x = skin,
+  subset = nCount_ATAC < 20000 &
+    nCount_RNA < 5000 &
+    nCount_ATAC > 500 &
+    nCount_RNA > 500 &
+    nucleosome_signal < 1 &
+    TSS.enrichment > 1
+)
+
+# Print summary of the filtered Seurat object
+skin
+```
+
+### Peak calling and quantification
+
+Call peaks, filter, count fragments per peak, and add to Seurat object.
+
+```{r}
+# Call peaks using MACS2 from the fragments in the Seurat object
+peaks <- CallPeaks(skin)
+
+# Remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks <- keepStandardChromosomes(peaks, pruning.mode = "coarse")
+peaks <- subsetByOverlaps(x = peaks, ranges = blacklist_mm10, invert = TRUE)
+
+# Quantify counts of fragments overlapping each peak for each cell, creating a peak-by-cell count matrix
+macs2_counts <- FeatureMatrix(
+  fragments = Fragments(skin),
+  features = peaks,
+  cells = colnames(skin)
+)
+
+# Create a new chromatin assay based on MACS2-called peaks and add it to the Seurat object
+skin[["peaks"]] <- CreateChromatinAssay(
+  counts = macs2_counts,
+  fragments = fragpath,
+  annotation = annotations
+)
+
+# Print summary of the updated Seurat object
+skin
+```
+
+### RNA analysis
+
+Normalize RNA data with SCTransform and perform PCA for dimensionality reduction.
+
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set the default assay to "RNA" for RNA-based analysis
+DefaultAssay(skin) <- "RNA"
+
+# Perform normalization and variance stabilization using SCTransform
+# This replaces traditional log-normalization and identifies variable features
+skin <- SCTransform(skin)
+
+# Run Principal Component Analysis (PCA) on the normalized data
+# PCA reduces dimensionality while preserving major sources of variation
+skin <- RunPCA(skin)
+```
+
+### ATAC analysis
+
+Identify highly accessible peaks and perform dimensionality reduction using TF-IDF and SVD (LSI).
+
+```{r message=FALSE, warning=FALSE}
+# Set the default assay to "peaks" (i.e., the MACS2-called peak matrix)
+DefaultAssay(skin) <- "peaks"
+
+# Identify top features (peaks) based on accessibility; only keep peaks present in at least 5 cells
+skin <- FindTopFeatures(skin, min.cutoff = 5)
+
+# Perform Term Frequency-Inverse Document Frequency (TF-IDF) normalization
+skin <- RunTFIDF(skin)
+
+# Perform dimensionality reduction using Singular Value Decomposition (SVD), also referred to as Latent Semantic Indexing (LSI) in this context
+skin <- RunSVD(skin)
+```
+
+### Intergration analysis
+
+Using [Seurat v4](https://www.biorxiv.org/content/10.1101/2020.10.12.335331v1)’s weighted nearest neighbor method, we integrate gene expression and chromatin accessibility into a joint neighbor graph and create a unified UMAP embedding combining RNA and ATAC data.
+
+```{r fig.width = 8, fig.height = 8,message=FALSE, warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Build a multimodal nearest-neighbor graph using PCA from RNA and LSI from ATAC
+skin <- FindMultiModalNeighbors(
+  object = skin,
+  reduction.list = list("pca", "lsi"),
+  dims.list = list(1:50, 2:40),
+  modality.weight.name = "RNA.weight",
+  verbose = TRUE
+)
+
+# Generate a joint UMAP embedding using the WNN graph
+# The embedding combines information from both RNA and ATAC modalities
+skin <- RunUMAP(
+  object = skin,
+  nn.name = "weighted.nn",
+  assay = "RNA",
+  verbose = TRUE
+)
+
+# Visualize the UMAP embedding, grouping cells by annotated cell type
+DimPlot(skin, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 2.5, repel = TRUE) + NoLegend()
+```
+
+```{r include=FALSE}
+# Save the integrated Seurat object for future use
+saveRDS(skin, file = "mouse_skin_multiomic.rds")
+```
+
+## Infer enhancer–gene links 
+
+### Preprocess data
+To prepare for SCEG-HiC analysis, we process paired scATAC-seq/RNA-seq data stored in a Seurat object. Here, we use the aggregation approach to handle paired scATAC-seq/RNA-seq data. By default, the scATAC-seq counts are binarized to indicate the presence or absence of chromatin accessibility at each peak.
+
+```{r}
+# Prepare input data for SCEG-HiC analysis
+# This function processes paired paired scATAC-seq/RNA-seq data stored in a Seurat object
+SCEGdata <- process_data(skin, cellnames = "celltype", max_overlap = 0.5)
+```
+
+### Calculate weight
+
+Calculating weights with SCEG-HiC can be time-consuming, especially as the number of selected genes increases. To facilitate this process, SCEG-HiC provides downloadable average Hi-C datasets for both human and mouse (detail [here](https://wuwei77lx.github.io/SCEGHiC/index.html#the-bulk-average-hi-c)). In this case, we select the mouse average Hi-C data as prior information to calculate enhancer-gene interaction weights.
+
+<details>
+  <summary>**Select  highly variable features**</summary>
+  
+You can focus on the top 3000 highly variable genes identified by SCTransform normalization:
+
+```{r eval=FALSE}
+# Extract highly variable genes
+gene <- skin@assays[["SCT"]]@var.features
+
+# Calculate Hi-C weights for these genes using mouse average Hi-C data
+weight <- calculateHiCWeights(SCEGdata, species = "Mus musculus", genome = "mm10", focus_gene = gene, averHicPath = "/picb/bigdata/project/liangxuan/data/mouse_contact/average")
+```
+
+</details>
+
+As an example, we calculate Hi-C weights focusing on Basal cell marker genes (e.g., Krt5, Krt14).
+
+```{r }
+# Alternatively, calculate Hi-C weights for specific marker genes of Basal cells (e.g. Krt5, Krt14)
+weight <- calculateHiCWeights(SCEGdata, species = "Mus musculus", genome = "mm10", focus_gene = c("Krt5", "Krt14"), averHicPath = "/picb/bigdata/project/liangxuan/data/mouse_contact/average")
+```
+
+### Run model
+
+SCEG-HiC employs the wglasso method to infer enhancer-gene links by integrating processed single-cell multi-omics data and normalized bulk average Hi-C contact matrices. The bulk Hi-C matrix is normalized using rank score to improve accuracy. In this example, we run the model focusing on Basal cell marker genes Krt5 and Krt14 to identify their putative enhancer links.
+
+```{r }
+# Example: Run the model focused on Basal cell markers Krt5 and Krt14
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = c("Krt5", "Krt14"))
+```
+
+## Visualize enhancer–gene links
+
+### Arc plot visualization of enhancer-gene links
+
+Arc plot visualizes the predicted links between enhancers and target genes as arcs connecting genomic regions, highlighting spatial chromatin interactions inferred by SCEG-HiC.
+
+```{r,message=FALSE,warning=FALSE}
+# Download and prepare gene annotation data
+temp <- tempfile()
+download.file("https://hgdownload2.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/mm10.refGene.gtf.gz", temp)
+gene_anno <- rtracklayer::readGFF(temp)
+unlink(temp)
+
+# Rename some columns to match requirements
+gene_anno$chromosome <- gene_anno$seqid
+gene_anno$gene <- gene_anno$gene_id
+gene_anno$transcript <- gene_anno$transcript_id
+gene_anno$symbol <- gene_anno$gene_name
+```
+
+Arc plot visualization of enhancer-gene links for Krt5.
+```{r,fig.width = 12, fig.height = 5,warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+connections_Plot(results_SCEGHiC, species = "Mus musculus", genome = "mm10", focus_gene = "Krt5", cutoff = 0.01, gene_anno = gene_anno)
+```
+
+Arc plot visualization of enhancer-gene links for Krt14.
+```{r,fig.width = 12, fig.height = 5,warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+connections_Plot(results_SCEGHiC, species = "Mus musculus", genome = "mm10", focus_gene = "Krt14", cutoff = 0.01, gene_anno = gene_anno)
+```
+
+
+
+### Coverage plot visualization of enhancer-gene links with Hi-C (or eQTL) validation
+
+Coverage Plot visualizes chromatin accessibility around a target gene, including Hi-C interactions, scATAC-seq signals, aggregated ATAC-RNA correlations, eQTL SNPs, and enhancer–gene links predicted by SCEG-HiC. This facilitates intuitive comparison of regulatory interactions across multiple data layers.
+
+We compare predicted enhancer-gene interactions with experimental Hi-C data from Basal cells ([GSE197024](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE197024)) by visualizing coverage plots and computing the Pearson correlation coefficient between each gene and its candidate enhancers.The detailed code for this analysis is publicly available at the [GitHub repository](https://github.com/wuwei77lx/compare_model).
+
+Coverage plot and visualize the links of Krt5 and Krt14.
+```{r, fig.width = 15.5, fig.height = 18,warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Load the truth of Basal data
+truth_Basal <- readRDS("truth_Basal.rds")
+
+## Load correlation data
+correlation <- readRDS("correlation_Basal.rds")
+
+# Coverage plot and visualize the links of Krt5
+
+p1 <- coverPlot(skin, focus_gene = "Krt5", species = "Mus musculus", genome = "mm10", assay = "peaks", HIC_Result = truth_Basal, SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.01, correlation = correlation, cells = c("Basal", "Spinous", "Granular"), cellnames = "celltype")
+
+# Coverage plot and visualize the links of Krt14
+
+p2 <- coverPlot(skin, focus_gene = "Krt14", species = "Mus musculus", genome = "mm10", assay = "peaks", HIC_Result = truth_Basal, SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.01, correlation = correlation, cells = c("Basal", "Spinous", "Granular"), cellnames = "celltype")
+
+patchwork::wrap_plots(p1, p2, ncol = 1)
+```
+
+<details>
+  <summary>**Session Info**</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>
