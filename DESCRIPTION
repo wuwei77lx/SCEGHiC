@@ -49,6 +49,6 @@ Depends:
     R (>= 2.10)
 VignetteBuilder: knitr
 LazyData: true
-URL: https://wuwei77lx.github.io/SCEGHiC/
+URL: https://github.com/wuwei77lx/SCEGHiC
 Config/testthat/edition: 3
-BugReports: https://wuwei77lx.github.io/SCEGHiC/issues
+BugReports: https://github.com/wuwei77lx/SCEGHiC/issues
