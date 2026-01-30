@@ -1,0 +1,198 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+```
+
+# SCEG-HiC (Predicting enhancer-gene links from single-cell multi-omics data by integrating prior Hi-C information)
+
+<!-- badges: start -->
+<!-- badges: end -->
+## Overview
+SCEG-HiC predicts enhancer–gene links by integrating multi-omics single-cell data (either paired scATAC-seq/RNA-seq or scATAC-seq alone) with three-dimensional chromatin conformation information derived from bulk average Hi-C data. It employs the weighted graphical lasso (wglasso) model to incorporate average bulk Hi-C data, effectively regularizing the correlation matrix with the prior Hi-C contact matrix as a penalty term.
+
+## Installation
+
+### Required software
+
+SCEG-HiC runs in the [R statistical computing environment](https://www.r-project.org/). It requires R version 4.1.0 or higher, [Bioconductor](https://bioconductor.org/) version 3.14 or higher, and Seurat 4.0 or higher to access the latest features.
+
+To install Bioconductor, open an R session and run:
+
+``` r
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.14")
+```
+
+Next, install a few Bioconductor packages that are not installed automatically:
+
+``` r
+BiocManager::install(c(
+  'BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+  'limma', 'lme4', 'S4Vectors', 'SingleCellExperiment',
+  'SummarizedExperiment', 'batchelor', 'HDF5Array',
+  'terra', 'ggrastr', 'Gviz', 'rtracklayer', 'GenomeInfoDb', 'GenomicRanges'
+))
+```
+
+Installation of other dependencies
+
+- Install the Signac pacakge: ```devtools::install_github("timoast/signac", ref = "develop")```. If you encounter any issues, please check the [Signac documentation](https://stuartlab.org/signac/).
+- Install the Cicero package: ```devtools::install_github("cole-trapnell-lab/cicero-release", ref = "monocle3")```. If you encounter any issues, please check the  [Cicero installation guide](https://cole-trapnell-lab.github.io/cicero-release/docs_m3/#installing-cicero).
+
+Now, you can install the development version of SCEG-HiC from [GitHub](https://github.com/) with:
+
+``` r
+# If you haven't installed devtools yet, uncomment and run:
+# install.packages("devtools")
+
+# Install the development version of SCEG-HiC from GitHub
+devtools::install_github("wuwei77lx/SCEGHiC")
+```
+
+If you prefer the stable release version from CRAN, run:
+
+```r
+# Install the released version from CRAN
+install.packages("SCEGHiC")
+```
+### Testing the installation
+
+To verify that SCEG-HiC installed correctly, start a new R session and run:
+
+```{r message=FALSE,warning=FALSE}
+library(SCEGHiC)
+```
+
+If no errors appear, the package is successfully loaded and ready to use.
+
+
+## Quickstart
+
+This basic example demonstrates how to analyze paired scATAC-seq/RNA-seq data using SCEG-HiC:
+
+```{r,dpi=150, dev='ragg_png', fig.align='center'}
+library(SCEGHiC)
+library(Signac)
+
+# Load example multi-omics dataset
+data(multiomic_small)
+
+# Preprocess the data (aggregation)
+SCEGdata <- process_data(multiomic_small, k_neigh = 5, max_overlap = 0.5)
+
+# Define genes of interest
+gene <- c("TRABD2A", "GNLY", "MFSD6", "CTLA4", "LCLAT1", "NCK2", "GALM", "TMSB10", "ID2", "CXCR4")
+
+# Get path to example average Hi-C data
+fpath <- system.file("extdata", package = "SCEGHiC")
+
+# Calculate Hi-C based weights for enhancer-gene pairs
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = gene, averHicPath = fpath)
+
+# Run the SCEG-HiC model
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = gene)
+
+# Arc plot visualization predicted enhancer-gene links for CTLA4
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "CTLA4", cutoff = 0.01, gene_anno = NULL)
+# Load fragment data for coverage plotting
+frag_path <- system.file("extdata", "multiomic_small_atac_fragments.tsv.gz", package = "SCEGHiC")
+frags <- CreateFragmentObject(path = frag_path, cells = colnames(multiomic_small))
+Fragments(multiomic_small) <- frags
+
+# Coverage plot and visualize the links of CTLA4
+coverPlot(multiomic_small, focus_gene = "CTLA4", species = "Homo sapiens", genome = "hg38",
+          assay = "peaks", SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.01)
+```
+
+<details>
+  <summary>**Session Info**</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>
+
+
+See the [documentation website](https://wuwei77lx.github.io/SCEGHiC/) for more information!
+
+
+## The bulk average Hi-C data
+The human cell types used for averaging are based on [34 Hi-C datasets](https://www.encodeproject.org/annotations/ENCSR382HAW/) from the ENCODE project.
+
+The mouse cell types used for averaging are: two embryonic stem cell types (mESC1, mESC2), CH12LX, CH12F3, fiber, epithelium, and B cells.
+
+The bulk average Hi-C data can be generated using the [Activity by Contact (ABC)](https://www.nature.com/articles/s41588-019-0538-0) model's ```makeAverageHiC.py``` script.
+
+### Download Links for Average Hi-C Data
+
+* **Human bulk average Hi-C (~54.1 GB)**
+
+  Download from: [ENCFF134PUN.bed.gz](https://www.encodeproject.org/files/ENCFF134PUN/@@download/ENCFF134PUN.bed.gz).
+
+After downloading, extract the human bulk average Hi-C using the [Activity by Contact (ABC)](https://www.nature.com/articles/s41588-019-0538-0) model's ```extract_avg_hic.py``` script:
+
+```{sh eval=FALSE}
+python code/Hi_C/extract_avg_hic.py --avg_hic_bed_file ../ENCFF134PUN.bed.gz --output_dir ../
+```
+
+* **Mouse bulk average Hi-C (~13.9 GB)**
+
+  Download from: [10.5281/zenodo.14849886](https://zenodo.org/record/14849886).
+
+
+For more details about bulk average Hi-C data, please visit: https://github.com/wuwei77lx/compare_model.
+
+## Example
+In SCEG-HiC, you can choose either aggregation or single-cell retention approach:
+
+- **Aggregation approach**: Aggregates binarized scATAC-seq data across cell types using k-nearest neighbor smoothing to reduce data sparsity. This approach captures a broader spectrum of enhancer-gene links across cell types, with slightly reduced prediction accuracy.
+
+- **Single-cell retention approach**: Normalizes scATAC-seq data within individual cell types to individual cell signals. This method achieves higher precision and accuracy, albeit identifying fewer enhancer-gene links
+
+**Recommendation**: To balance accuracy and coverage, we implemented both preprocessing strategies in SCEG-HiC, with aggregation designated as the default. The single-cell retention approach can be optionally used when higher precision within specific cell types is desired.
+
+For more details and real data examples, please visit:
+
+- [SCEG-HiC on paired scATAC-seq/RNA-seq data of PBMC (aggregation)](https://wuwei77lx.github.io/SCEGHiC/articles/PBMC_multiomic_aggregation.html)
+
+- [SCEG-HiC on paired scATAC-seq/RNA-seq data of PBMC CD4T](https://wuwei77lx.github.io/SCEGHiC/articles/PBMC_multiomic_CD4T.html)
+
+- [SCEG-HiC on paired scATAC-seq/RNA-seq data of mouse skin (aggregation)](https://wuwei77lx.github.io/SCEGHiC/articles/mouse_skin_multiomic_aggregation.html)
+
+- [SCEG-HiC on scATAC-seq data alone from human COVID-19 monocytes](https://wuwei77lx.github.io/SCEGHiC/articles/human_covid_19_scATAC_seq_monocytes.html)
+
+Alternatively, when applying SCEG-HiC to a new tissue, the penalty strength can be adjusted using the alpha parameter (```alpha * rho```):
+
+ - **Increase alpha** to prioritize high-confidence enhancer-gene links, e.g., when the new tissue is developmentally similar to the datasets used to construct the bulk averaged Hi-C prior or when the single-cell data are noisy. 
+ 
+ - **Decrease alpha** to explore a broader set of potential links, e.g., for rare, unique, or disease-specific tissues.
+ 
+```{r, eval=FALSE}
+# Example: run SCEG-HiC with scaled penalty
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = gene, alpha=1.5)
+```
+
+**Notes:**
+
+ - ```alpha = 1``` uses the original penalty (default).
+
+ - ```alpha > 1``` strengthens the penalty.
+
+ - ```alpha < 1 ```weakens the penalty.
+
+
+## Help
+
+If you have any questions, comments, or suggestions, please contact Xuan Liang at liangxuan2022@sinh.ac.cn.

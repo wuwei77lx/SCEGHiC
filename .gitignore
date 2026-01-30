@@ -1,0 +1,9 @@
+results/
+output/
+*.rds
+*.h5ad
+*.npz
+*.npy
+*.bed.gz
+*.html
+*.log

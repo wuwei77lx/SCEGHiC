@@ -1,0 +1,728 @@
+---
+title: "SCEG-HiC on scATAC-seq data alone from human COVID-19 monocytes"
+author: "XuanLiang"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/picb/bigdata/project/liangxuan/data/model/model/data/human/COVID_19")
+options(future.globals.maxSize = 20 * 1024^3)
+```
+
+In this vignette, we will demonstrate SCEG-HiC’s ability to infer enhancer-gene links using scATAC-seq data alone. We will use publicly available scATAC-seq datasets from human COVID-19 PBMCs and process only CD14+ monocytes using the single-cell retention approach.
+
+The implementation of SCEG-HiC is seamlessly compatible with the standard workflow of the Seurat/Signac packages. The SCEG-HiC pipeline consists of the following three main steps:
+
+* **Set up the Seurat object**: Prepare and preprocess scATAC-seq data using the Seurat and Signac framework.
+
+* **Infer enhancer–gene links**: Apply the SCEG-HiC model to the processed Seurat object, incorporating human bulk average Hi-C data as a chromatin conformation prior to enhance the inference of enhancer–gene links.
+
+* **Visualize enhancer–gene links**: Generate graphical outputs such as arc diagrams and coverage plots to visualize predicted enhancer–gene links.
+
+You can download the required data from [GSE174072](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE174072). A total of 18 samples were analyzed; however, sample 28205-0560, which had a WHO severity score of 8 (indicating a "fatal" outcome), was excluded from the analysis.
+
+
+<details>
+  <summary>**View data download code**</summary>
+
+You can download the required  scATAC-seq data by running the following lines in a shell:
+
+```{sh eval=FALSE}
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285728/suppl/GSM5285728%5F55650%2D0055%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285729/suppl/GSM5285729%5F55650%2D0057%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285730/suppl/GSM5285730%5F55650%2D0132d0%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285731/suppl/GSM5285731%5F55650%2D0052%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285732/suppl/GSM5285732%5F28205%2D0555d0%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285733/suppl/GSM5285733%5F28205%2D0555d2%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285734/suppl/GSM5285734%5F28205%2D0556%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285735/suppl/GSM5285735%5F28205%2D0557%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285736/suppl/GSM5285736%5F28205%2D0558%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285737/suppl/GSM5285737%5F28205%2D0559%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285739/suppl/GSM5285739%5F28205%2D0564d0%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285740/suppl/GSM5285740%5F28205%2D0564d2%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285741/suppl/GSM5285741%5F55650%2D0066d0%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285742/suppl/GSM5285742%5F55650%2D0066d7%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285743/suppl/GSM5285743%5F55650%2D0067%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285744/suppl/GSM5285744%5F55650%2D0083%5Ffragments.tsv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM5285nnn/GSM5285745/suppl/GSM5285745%5F55650%2D0086%5Ffragments.tsv.gz
+```
+
+After downloading, you need to generate the corresponding ```.tbi``` index files for each ```.fragments.tsv.gz``` file to enable efficient data access. This can be done with:
+
+```{sh eval=FALSE}
+# Before indexing, make sure tabix is installed. You can install it via Conda: conda install bioconda::tabix
+for file in *_fragments.tsv.gz; do
+  tabix -0 -p bed "$file"
+done
+```
+
+</details>
+
+## Load the required libraries
+```{r message=FALSE, warning=FALSE}
+library(SCEGHiC)
+library(Seurat)
+library(Signac)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(EnsDb.Hsapiens.v86)
+library(ggplot2)
+library(dplyr)
+```
+
+## Set up the Seurat Object
+
+To facilitate easy exploration, ```covid_19_multiomic.rds``` file is also available at [10.5281/zenodo.14849886](https://zenodo.org/record/14849886).
+
+**Note**: Due to the stochastic nature of ```RunHarmony```, particularly in the dimensional alignment process, the UMAP embeddings obtained from re-running the pipeline may slightly differ from those in the provided ```covid_19_multiomic.rds```  file.
+
+Here, we use sample 55650-0067 as an example. 
+
+### Create only scATAC-seq Seurat object from ATAC fragment file
+
+Since only a fragment file is available, we generate a count matrix using the ```FeatureMatrix()``` function.
+
+```{r message=FALSE, warning=FALSE}
+# Load ATAC-seq fragment file
+fragpath <- "hg38/GSM5285743_55650-0067_fragments.tsv.gz"
+
+# Count total number of fragments per barcode
+total_counts <- CountFragments(fragpath)
+
+# Filter barcodes with sufficient fragment counts
+cutoff <- 1000 # Change this number depending on your dataset
+barcodes <- total_counts[total_counts$frequency_count > cutoff, ]$CB
+```
+
+Construct a Seurat object using ATAC-seq chromatin accessibility data alone and genome annotations from hg38.
+
+```{r message=FALSE, warning=FALSE}
+# Get gene annotations from EnsDb.Hsapiens.v86
+# Add "chr" prefix to chromosome names to match peak naming conventions
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+seqlevels(annotation) <- paste0("chr", seqlevels(annotation))
+
+# Create a Fragment object with filtered barcodes
+frags <- CreateFragmentObject(path = fragpath, cells = barcodes)
+
+# Call peaks using MACS2 from the fragments in the Seurat object
+peaks <- CallPeaks(frags)
+
+# Remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks <- keepStandardChromosomes(peaks, pruning.mode = "coarse")
+peaks <- subsetByOverlaps(x = peaks, ranges = blacklist_hg38_unified, invert = TRUE)
+
+# Quantify counts of fragments overlapping each peak for each cell, creating a peak-by-cell count matrix
+counts <- FeatureMatrix(fragments = frags, features = peaks, cells = barcodes)
+
+# Create a ChromatinAssay using the peak count matrix
+chrom_assay <- CreateChromatinAssay(
+  counts = counts,
+  sep = c(":", "-"),
+  fragments = frags,
+  annotation = annotation,
+  min.cells = 10,
+  min.features = 200
+)
+
+# Initialize a Seurat object with the ATAC assay
+covid_19 <- CreateSeuratObject(
+  counts = chrom_assay,
+  assay = "ATAC"
+)
+```
+
+```{r}
+# Display summary of the Seurat object
+covid_19
+```
+
+### Quality control and filtering
+
+Calculate QC metrics (log10 of total ATAC counts, nucleosome signal, and TSS enrichment) and filter out low-quality cells using defined thresholds.QC criteria vary across samples; for detailed thresholds, please consult the original publications.
+
+```{r fig.width = 18, fig.height = 6, message=FALSE, warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Set default assay to ATAC for ATAC-seq quality metrics calculation
+DefaultAssay(covid_19) <- "ATAC"
+
+# Calculate nucleosome signal score, which reflects nucleosome positioning
+covid_19 <- NucleosomeSignal(covid_19)
+
+# Calculate Transcription Start Site (TSS) enrichment score for each cell, a metric for ATAC-seq data quality
+covid_19 <- TSSEnrichment(covid_19)
+
+# Calculate log10-transformed fragment counts
+covid_19$log10_fragments <- log10(covid_19$nCount_ATAC + 1)
+
+# Plot violin plots for QC metrics:
+# - log10 of total ATAC counts (log10_fragments)
+# - TSS enrichment score (TSS.enrichment)
+# - Nucleosome signal score (nucleosome_signal)
+VlnPlot(
+  object = covid_19,
+  features = c("log10_fragments", "TSS.enrichment", "nucleosome_signal"),
+  ncol = 3,
+  pt.size = 0
+)
+```
+
+```{r}
+# Filter out low-quality cells based on multiple QC thresholds, which may vary between samples.
+ATAC_067 <- subset(
+  x = covid_19,
+  subset =
+    log10_fragments < 3.7 &
+      log10_fragments > 3 &
+      nucleosome_signal < 2 &
+      TSS.enrichment < 8
+)
+
+# Print summary of the filtered Seurat object
+ATAC_067
+```
+
+<details>
+  <summary>**Creating a common peak set**</summary>
+  
+17 samples samples are processed following the steps outlined above. Since peaks identified independently in each experiment may not perfectly overlap, we merge peaks from all datasets to create a common peak set. This common peak set is then quantified in each experiment before merging the objects.
+
+```{r eval=FALSE}
+# Combine peaks from multiple ATAC-seq samples into a unified peak set
+combined.peaks <- UnifyPeaks(object.list = list(ATAC_055, ATAC_057, ATAC_132D0, ATAC_052, ATAC_555_1, ATAC_555_2, ATAC_556, ATAC_557, ATAC_558, ATAC_559, ATAC_564A, ATAC_564B, ATAC_66D0, ATAC_66D7, ATAC_067, ATAC_083, ATAC_086), mode = "reduce")
+
+# Save the combined peak set for downstream analysis
+saveRDS(combined.peaks, file = "hg38/combined.peaks.rds")
+```
+
+</details>
+
+### Update Seurat object with combined peak set quantification
+
+Quantify peaks using the merged peak set and update the Seurat object accordingly.
+
+```{r message=FALSE, warning=FALSE}
+# Load the combined peak set
+combined.peaks <- readRDS("hg38/combined.peaks.rds")
+
+# Filter peaks by width (keep peaks between 20 and 10,000 bp)
+peakwidths <- width(combined.peaks)
+combined.peaks <- combined.peaks[peakwidths < 10000 & peakwidths > 20]
+
+# Quantify peak counts in the ATAC_067 dataset using the combined peak set
+ATAC_067.counts <- FeatureMatrix(
+  fragments = Fragments(ATAC_067),
+  features = combined.peaks,
+  sep = c(":", "-"),
+  cells = colnames(ATAC_067)
+)
+
+frags.ATAC_067 <- CreateFragmentObject(
+  path = fragpath,
+  cells = colnames(ATAC_067)
+)
+
+# Backup original ATAC assay as "raw"
+ATAC_067[["raw"]] <- ATAC_067@assays[["ATAC"]]
+
+# Create a new ATAC assay with counts quantified using the combined peak set and updated fragments
+ATAC_067[["ATAC"]] <- CreateChromatinAssay(counts = ATAC_067.counts, sep = c(":", "-"), fragments = frags.ATAC_067, annotation = annotation)
+
+# Add metadata: sample ID and maximum severity score
+ATAC_067$record_id <- "55650-0067"
+ATAC_067$MAX_SEVERITY_SCORE <- 2
+
+# Display the updated Seurat object
+ATAC_067
+```
+
+### Cell type annotation
+
+A public multi-omics dataset from [10x Genomics on healthy PBMCs](https://support.10xgenomics.com/single-cell-multiome-atac-gex/datasets/1.0.0/pbmc_granulocyte_sorted_10k) is used as an intermediate reference for cell type annotation. We further annotate the multi-omics dataset using the PBMC reference from [Hao et al. (2020)](https://www.biorxiv.org/content/10.1101/2020.10.12.335331v1). Each scATAC sample is then projected into the linear dimensionality reduction space of the multi-omics dataset.
+
+<details>
+  <summary>**Create a multi-omics PBMC reference dataset**</summary>
+
+**Generation of a reference Seurat object with RNA and ATAC data**
+
+Construct a reference Seurat object combining RNA expression and ATAC-seq chromatin accessibility data and genome features from hg38.
+
+```{r eval=FALSE}
+# Load required libraries
+library(Seurat)
+library(Signac)
+library(GenomicRanges)
+library(GenomeInfoDb)
+library(EnsDb.Hsapiens.v86)
+library(hdf5r)
+
+# Load RNA and ATAC data from 10X Genomics output
+counts <- Read10X_h5("pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
+fragpath <- "pbmc_granulocyte_sorted_10k_atac_fragments.tsv.gz"
+
+# Get gene annotations from EnsDb.Hsapiens.v86
+# Add "chr" prefix to chromosome names to match peak naming conventions
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+seqlevels(annotation) <- paste0("chr", seqlevels(annotation))
+
+# Create a Seurat object containing the RNA count matrix (assay named "RNA")
+reference <- CreateSeuratObject(
+  counts = counts$`Gene Expression`,
+  assay = "RNA"
+)
+
+# Create an ATAC assay using the filtered peak counts and annotations, and add it to the Seurat object
+reference[["ATAC"]] <- CreateChromatinAssay(
+  counts = counts$Peaks,
+  sep = c(":", "-"),
+  fragments = fragpath,
+  annotation = annotation
+)
+```
+
+**Quality control and filtering of the reference dataset**
+
+Calculate QC metrics (RNA counts, ATAC counts, mitochondrial percentage, nucleosome signal, TSS enrichment) and filter low-quality cells using defined thresholds.
+
+```{r eval=FALSE}
+# Calculate the percentage of mitochondrial gene counts for each cell
+# Mitochondrial genes typically start with "MT-"
+reference[["percent.mt"]] <- PercentageFeatureSet(reference, pattern = "^MT-")
+
+# Set default assay to ATAC for ATAC-seq quality metrics calculation
+DefaultAssay(reference) <- "ATAC"
+
+# Calculate nucleosome signal score, which reflects nucleosome positioning
+reference <- NucleosomeSignal(reference)
+
+# Calculate Transcription Start Site (TSS) enrichment score for each cell, a metric for ATAC-seq data quality
+reference <- TSSEnrichment(reference)
+
+# Filter out low-quality cells based on multiple QC thresholds
+reference <- subset(
+  x = reference,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 15000 &
+    nCount_ATAC > 1000 &
+    nCount_RNA > 1000 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mt < 20
+)
+```
+
+**Preprocessing the reference multi-omics dataset**
+
+We call peaks using MACS2, filter them, and build a chromatin assay. RNA is normalized with SCTransform and PCA is run. ATAC data is processed using TF-IDF and SVD for dimensionality reduction.
+
+```{r eval=FALSE}
+# Call peaks using MACS2 from the fragments in the Seurat object
+peaks <- CallPeaks(reference)
+
+# Remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks <- keepStandardChromosomes(peaks, pruning.mode = "coarse")
+peaks <- subsetByOverlaps(x = peaks, ranges = blacklist_hg38_unified, invert = TRUE)
+
+# Quantify counts of fragments overlapping each peak for each cell, creating a peak-by-cell count matrix
+macs2_counts <- FeatureMatrix(
+  fragments = Fragments(reference),
+  features = peaks,
+  cells = colnames(reference)
+)
+
+# Create a new chromatin assay based on MACS2-called peaks and add it to the Seurat object
+reference[["peaks"]] <- CreateChromatinAssay(
+  counts = macs2_counts,
+  fragments = fragpath,
+  annotation = annotation
+)
+
+# RNA analysis
+# Set the default assay to "RNA" for RNA-based analysis
+DefaultAssay(reference) <- "RNA"
+
+# Perform normalization and variance stabilization using SCTransform
+# This replaces traditional log-normalization and identifies variable features
+reference <- SCTransform(reference)
+
+# Run Principal Component Analysis (PCA) on the normalized data
+# PCA reduces dimensionality while preserving major sources of variation
+reference <- RunPCA(reference)
+
+# ATAC analysis
+# Set the default assay to "peaks" (i.e., the MACS2-called peak matrix)
+DefaultAssay(reference) <- "peaks"
+
+# Identify top features (peaks) based on accessibility; only keep peaks present in at least 5 cells
+reference <- FindTopFeatures(reference, min.cutoff = 5)
+
+# Perform Term Frequency-Inverse Document Frequency (TF-IDF) normalization
+reference <- RunTFIDF(reference)
+
+# Perform dimensionality reduction using Singular Value Decomposition (SVD), also referred to as Latent Semantic Indexing (LSI) in this context
+reference <- RunSVD(reference)
+```
+
+**Annotating cell types in the reference dataset**
+
+Load the processed PBMC multimodal reference, transfer cell type labels using ```FindTransferAnchors``` and ```TransferData```, filter high-confidence predictions, and compute a joint UMAP for visualization.
+
+```{r eval=FALSE}
+
+# Load necessary library for working with Seurat h5Seurat format
+library(SeuratDisk)
+
+# Load multimodal PBMC reference dataset (processed with spca and SCT)
+pbmc.re <- LoadH5Seurat("pbmc_multimodal.h5seurat", assays = list("SCT" = "counts"), reductions = "spca")
+
+# Ensure the reference object is compatible with current Seurat version
+pbmc.re <- UpdateSeuratObject(pbmc.re)
+
+# Set the default assay for the query object to SCT (if applicable)
+DefaultAssay(reference) <- "SCT"
+
+# Identify anchors between the reference and the query using spca
+transfer_anchors <- FindTransferAnchors(
+  reference = pbmc.re,
+  query = reference,
+  normalization.method = "SCT",
+  reference.reduction = "spca",
+  recompute.residuals = FALSE,
+  dims = 1:50
+)
+
+# Transfer cell type annotations from reference to query based on anchors
+predictions <- TransferData(
+  anchorset = transfer_anchors,
+  refdata = pbmc.re$celltype.l2,
+  weight.reduction = reference[["pca"]],
+  dims = 1:50
+)
+
+# Store the predicted cell types in the metadata of the query object
+reference <- AddMetaData(
+  object = reference,
+  metadata = predictions
+)
+
+reference <- reference[, reference$prediction.score.max > 0.5]
+
+# Build a joint neighbor graph using both assays
+reference <- FindMultiModalNeighbors(
+  object = reference,
+  reduction.list = list("pca", "lsi"),
+  dims.list = list(1:50, 2:40),
+  modality.weight.name = "RNA.weight",
+  verbose = TRUE
+)
+
+# Build a joint UMAP visualization
+reference <- RunUMAP(
+  object = reference,
+  nn.name = "weighted.nn",
+  assay = "RNA",
+  verbose = TRUE
+)
+
+# Save data
+saveRDS(reference, file = "hg38/reference.rds")
+```
+</details>
+
+### Cell type annotation for ATAC_067
+
+Project ATAC_067 cells onto the reference dataset to transfer cell type labels. Group similar labels into broader categories and visualize them on UMAP.
+
+```{r fig.width = 6, fig.height = 6, message=FALSE, warning=FALSE, dpi=150, dev='ragg_png', fig.align='center'}
+# Load the previously saved multimodal PBMC reference dataset
+reference <- readRDS("hg38/reference.rds")
+
+# Get gene annotations from EnsDb.Hsapiens.v86
+# Add "chr" prefix to chromosome names to match peak naming conventions
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+seqlevels(annotation) <- paste0("chr", seqlevels(annotation))
+
+# Run UMAP again on reference using LSI dimensions 2:30, and save the model for projection
+reference <- RunUMAP(reference, reduction = "lsi", dims = 2:30, return.model = TRUE)
+
+# Use reference peak regions to quantify fragment counts in the query dataset (ATAC_067)
+DefaultAssay(reference) <- "ATAC"
+
+counts <- FeatureMatrix(
+  fragments = Fragments(ATAC_067),
+  features = granges(reference),
+  cells = colnames(ATAC_067)
+)
+
+# Create a new chromatin assay in the query object using quantified peak matrix
+ATAC_067[["peaks"]] <- CreateChromatinAssay(
+  counts = counts,
+  fragments = Fragments(ATAC_067),
+  annotation = annotation
+)
+
+# ATAC analysis
+# Set default assay to newly created peak matrix and perform ATAC-specific preprocessing
+DefaultAssay(ATAC_067) <- "peaks"
+
+# Identify highly variable peaks
+ATAC_067 <- FindTopFeatures(ATAC_067, min.cutoff = 10)
+
+# Perform TF-IDF normalization and dimensionality reduction via SVD
+ATAC_067 <- RunTFIDF(ATAC_067)
+ATAC_067 <- RunSVD(ATAC_067)
+
+# Project query cells into a 2D UMAP embedding using LSI dimensions 2:30
+ATAC_067 <- RunUMAP(object = ATAC_067, reduction = "lsi", dims = 2:30)
+
+# Find anchors between reference and query using LSI-based projection
+transfer.anchors <- FindTransferAnchors(
+  reference = reference,
+  query = ATAC_067,
+  reference.reduction = "lsi",
+  reduction = "lsiproject",
+  dims = 2:30
+)
+
+# Map the query ATAC-seq dataset onto the reference and transfer cell type annotations
+ATAC_067 <- MapQuery(
+  anchorset = transfer.anchors,
+  reference = reference,
+  query = ATAC_067,
+  refdata = reference$predicted.id, # cell type labels
+  reference.reduction = "lsi",
+  new.reduction.name = "ref.lsi",
+  reduction.model = "umap" # use UMAP model from reference
+)
+
+# Visualize predicted cell types in the query dataset using transferred labels
+DimPlot(ATAC_067, label = FALSE, group.by = "predicted.id", repel = TRUE, reduction = "umap", label.size = 4, pt.size = 1)
+```
+
+Group predicted cell types into broader categories and visualize them on UMAP.
+
+```{r fig.width = 6, fig.height = 6, message=FALSE, warning=FALSE,dpi=150, dev='ragg_png', fig.align='center' }
+# Rename predicted cell types into broader categories
+ATAC_067$celltype <- recode(ATAC_067@meta.data[["predicted.id"]],
+  "B intermediate" = "B", "B memory" = "B", "B naive" = "B", "Plasmablast" = "PB", "B immature" = "B", "CD4 CTL" = "CD4 T",
+  "CD4 Naive" = "CD4 T", "CD4 TCM" = "CD4 T", "CD4 TEM" = "CD4 T", "CD8 Naive" = "CD8 T", "CD8 TCM" = "CD8 T", "CD8 TEM" = "CD8 T", "Proliferating" = "Proliferating", "MAIT" = "Misc T",
+  "gdT" = "Misc T", "Treg" = "Misc T", "dnT" = "Misc T", "NK" = "NK", "NK_CD56bright" = "NK", "NK_CD56" = "NK", "CD14 Mono" = "CD14 mono", "CD16 Mono" = "CD16 mono", "pDC" = "pDC", "cDC1" = "DC", "cDC2" = "DC",
+  "ASDC" = "DC", "Platelet" = "Platelet", "Eryth" = "Eryth", "HSPC" = "HSPC"
+)
+
+# Visualize cell type annotations on UMAP
+DimPlot(ATAC_067, label = FALSE, group.by = "celltype", repel = TRUE, reduction = "umap", label.size = 4, pt.size = 1)
+```
+
+<details>
+  <summary>**Merge objects**</summary>
+  
+17 samples are processed following the steps above, and now that each object contains an assay with the same set of features, we can merge them using the standard ```merge``` function.
+
+```{r eval=FALSE}
+seurat_list <- list(
+  ATAC_055, ATAC_057, ATAC_132D0, ATAC_052, ATAC_555_1, ATAC_555_2, ATAC_556, ATAC_557,
+  ATAC_558, ATAC_559, ATAC_564A, ATAC_564B, ATAC_66D0, ATAC_66D7, ATAC_067, ATAC_083, ATAC_086
+)
+
+# Merge all datasets
+covid_19 <- Reduce(function(x, y) {
+  merge(x, y, add.cell.ids = c(1, 2))
+}, seurat_list)
+
+# Save the merged Seurat object
+saveRDS(covid_19, file = "hg38/covid_19_merge.rds")
+```
+
+</details>
+
+### ATAC analysis and batch correction of merge data
+
+Identify highly accessible peaks and perform dimensionality reduction using TF-IDF and SVD (LSI).Use [Harmony](https://doi.org/10.1038/s41592-019-0619-0) to correct batch effects by sample ID, then run UMAP on corrected data.
+
+```{r message=FALSE, warning=FALSE}
+# Load merged Seurat object
+covid_19 <- readRDS("hg38/covid_19_merge.rds")
+
+# Set the default assay to ATAC for downstream processing
+DefaultAssay(covid_19) <- "ATAC"
+
+# Select top features with minimum cutoff 10
+covid_19 <- FindTopFeatures(covid_19, min.cutoff = 10)
+
+# Perform TF-IDF normalization
+covid_19 <- RunTFIDF(covid_19)
+
+# Run SVD for dimensionality reduction (LSI)
+covid_19 <- RunSVD(covid_19)
+
+# Batch correction with Harmony using record_id as batch variable
+library(harmony)
+covid_19 <- RunHarmony(covid_19,
+  group.by.vars = "record_id",
+  reduction.use = "lsi",
+  reduction.save = "harmony",
+  assay.use = "ATAC",
+  project.dim = FALSE
+)
+
+# Run UMAP on Harmony-corrected dimensions (dimensions 2 to 30)
+covid_19 <- RunUMAP(object = covid_19, reduction = "harmony", dims = 2:30)
+```
+
+### Cell type annotation of merged ATAC data
+
+Clusters were assigned cell type labels based on the most frequent predicted identity within each cluster. Cell types were further simplified, and UMAPs were generated to visualize annotations, batch IDs, and COVID-19 severity.
+
+```{r fig.width = 18, fig.height = 6, message=FALSE, warning=FALSE,dpi=150, dev='ragg_png', fig.align='center'}
+# Perform nearest neighbor graph construction on Harmony reduction embeddings
+covid_19 <- FindNeighbors(object = covid_19, reduction = "harmony", dims = 2:30)
+
+# Perform clustering using Leiden algorithm (algorithm=3), with high resolution to get many clusters
+covid_19 <- FindClusters(object = covid_19, verbose = FALSE, resolution = 8, algorithm = 3)
+
+# Create a contingency table between predicted cell types and clusters
+temp <- table(covid_19$predicted.id, covid_19$seurat_clusters)
+
+# Initialize vector to store the most abundant predicted cell type per cluster
+wnn.celltype <- rep(NA, length(levels(covid_19$seurat_clusters)))
+
+# Generate a UMAP plot colored by predicted cell identity for color reference
+p <- DimPlot(covid_19,
+  reduction = "umap", group.by = "predicted.id",
+  label = TRUE, label.size = 2.5, repel = TRUE
+)
+
+# For each cluster, assign the cell type that appears most frequently in that cluster
+for (i in 1:length(wnn.celltype)) {
+  temp.i_1 <- temp[, colnames(temp) == as.character(i - 1)]
+  wnn.celltype[i] <- names(temp.i_1)[which.max(temp.i_1)]
+}
+
+# Extract colors corresponding to each cell type from the UMAP plot data
+pbuild <- ggplot2::ggplot_build(p)
+pdata <- pbuild$data[[1]]
+pdata <- cbind(covid_19$predicted.id, pdata)
+wnn.celltype.col <- rep(NA, length(wnn.celltype))
+for (i in 1:length(wnn.celltype)) {
+  wnn.celltype.col[i] <- pdata$colour[min(which(pdata$`covid_19$predicted.id` == wnn.celltype[i]))]
+}
+
+# Assign cluster names with the cell type labels
+names(wnn.celltype) <- levels(covid_19)
+
+# Rename cluster identities with the inferred cell types
+covid_19 <- RenameIdents(covid_19, wnn.celltype)
+
+# Simplify or consolidate cell types for easier interpretation
+covid_19$celltype1 <- recode(Idents(covid_19),
+  "B intermediate" = "B", "B memory" = "B", "B naive" = "B", "Plasmablast" = "PB", "B immature" = "B", "CD4 CTL" = "CD4 T",
+  "CD4 Naive" = "CD4 T", "CD4 TCM" = "CD4 T", "CD4 TEM" = "CD4 T", "CD8 Naive" = "CD8 T", "CD8 TCM" = "CD8 T", "CD8 TEM" = "CD8 T", "Proliferating" = "Proliferating", "MAIT" = "Misc T",
+  "gdT" = "Misc T", "Treg" = "Misc T", "dnT" = "Misc T", "NK" = "NK", "NK_CD56bright" = "NK", "NK_CD56" = "NK", "CD14 Mono" = "CD14 mono", "CD16 Mono" = "CD16 mono", "pDC" = "pDC", "cDC1" = "DC", "cDC2" = "DC",
+  "ASDC" = "DC", "Platelet" = "Platelet", "Eryth" = "Eryth", "HSPC" = "HSPC"
+)
+
+# Assign COVID-19 severity status based on MAX_SEVERITY_SCORE metadata
+class <- ifelse(covid_19@meta.data[["MAX_SEVERITY_SCORE"]] > 4, "severe", "mild")
+class <- factor(class, levels = c("severe", "mild"))
+covid_19$Status <- class
+
+# Plot UMAPs for cell types, batch IDs, and severity status
+p1 <- DimPlot(covid_19, label = TRUE, group.by = "celltype1", repel = TRUE, reduction = "umap", label.size = 4, pt.size = 1) + NoLegend()
+p2 <- DimPlot(covid_19, label = FALSE, group.by = "record_id", repel = TRUE, reduction = "umap", label.size = 4, pt.size = 1)
+p3 <- DimPlot(covid_19, label = FALSE, group.by = "Status", repel = TRUE, reduction = "umap", label.size = 4, pt.size = 1)
+
+# Combine the three plots side-by-side with centered title
+p1 + p2 + p3 & theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r include=FALSE}
+saveRDS(covid_19, file = "covid_19_multiomic.rds")
+```
+
+## Infer enhancer–gene links  
+
+### Preprocess data
+
+Here, use the single-cell retention approach to handle scATAC-seq data alone. The scATAC-seq counts are normalized using TF-IDF. We specifically select CD14+ monocytes with scATAC-seq data alone.
+
+```{r}
+# Prepare data for SCEG-HiC analysis
+# Here, data is processed without aggregation, focusing on CD14+ monocytes (CD14 mono)
+SCEGdata <- process_data(covid_19, aggregate = FALSE, celltype = "CD14 mono", atac_assay = "ATAC", cellnames = "celltype1",atacbinary=FALSE)
+```
+
+### Calculate weight
+
+Calculating weights with SCEG-HiC can be time-consuming, especially as the number of selected genes increases. To facilitate this process, SCEG-HiC provides downloadable average Hi-C datasets for both human and mouse (detail [here](https://wuwei77lx.github.io/SCEGHiC/index.html#the-bulk-average-hi-c)). In this case, we select the human average Hi-C data as prior information to calculate enhancer-gene interaction weights.
+
+As an example, we calculate Hi-C weights for the differential gene CCR1 in CD14+ monocytes from mild and severe cases.
+
+```{r }
+# Alternatively, calculate Hi-C weights for differential gene CCR1 in CD14+ monocytes from mild and severe cases
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = "CCR1", averHicPath = "/picb/bigdata/project/liangxuan/data/human_contact/AvgHiC")
+```
+
+### Run model
+
+SCEG-HiC employs the wglasso method to infer enhancer-gene links by integrating processed single-cell multi-omics data and normalized bulk average Hi-C contact matrices. The bulk Hi-C matrix is normalized using rank score to improve accuracy. In this example, we run the model on CD14+ monocytes to identify putative enhancer links for the differential gene CCR1 between mild and severe cases.
+
+```{r }
+# Example: Run the model focusing on CD14+ monocytes and the differential gene CCR1 between mild and severe cases
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = "CCR1")
+```
+
+## Visualize enhancer–gene links
+
+### Arc plot visualization of enhancer-gene links
+
+Arc plot visualizes the predicted links between enhancers and target genes as arcs connecting genomic regions, highlighting spatial chromatin interactions inferred by SCEG-HiC.
+
+Arc plot visualization of enhancer-gene links for CCR1.
+
+```{r,fig.width = 8, fig.height = 5,message=FALSE,warning=FALSE,dpi=150, dev='ragg_png', fig.align='center'}
+# Download and prepare gene annotation data 
+# wget https://hgdownload2.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.refGene.gtf.gz
+temp <- "hg38.refGene.gtf.gz"
+gene_anno <- rtracklayer::readGFF(temp)
+
+# Rename some columns to match requirements
+gene_anno$chromosome <- gene_anno$seqid
+gene_anno$gene <- gene_anno$gene_id
+gene_anno$transcript <- gene_anno$transcript_id
+gene_anno$symbol <- gene_anno$gene_name
+
+# Arc plot visualization of enhancer-gene links for CCR1
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "CCR1", cutoff = 0.01, gene_anno = gene_anno)
+```
+
+### Coverage plot visualization of enhancer-gene links with Hi-C (or eQTL) validation
+
+Coverage Plot visualizes chromatin accessibility around a target gene, including Hi-C interactions, scATAC-seq signals, aggregated ATAC-RNA correlations, eQTL SNPs, and enhancer–gene links predicted by SCEG-HiC. This facilitates intuitive comparison of regulatory interactions across multiple data layers.
+
+Here, the ground truth for CD14+ monocyte is obtained from the [ENCODE database](https://www.encodeproject.org/files/ENCFF684YCT/@@download/ENCFF684YCT.hic).The detailed code for this analysis is publicly available at the [GitHub repository](https://github.com/wuwei77lx/compare_model).
+
+Coverage plot and visualize the links of CCR1.
+
+```{r,fig.width = 15.5, fig.height = 7, warning=FALSE,dpi=150, dev='ragg_png', fig.align='center'}
+# Load the truth of CD14+ monocyte data
+truth_mono <- readRDS("truth_mono.rds")
+
+# Select CD14+ monocyte
+celltype <- "CD14 mono"
+keep <- which(covid_19$celltype1 %in% celltype)
+dataset <- subset(covid_19, cells = keep)
+
+# Coverage plot and visualize the links of CCR1
+coverPlot(dataset, focus_gene = "CCR1", species = "Homo sapiens", genome = "hg38", assay = "ATAC", HIC_Result = truth_mono, SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.001, cellnames = "Status")
+```
+
+<details>
+  <summary>**Session Info**</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>
