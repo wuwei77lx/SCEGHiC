@@ -1,0 +1,80 @@
+---
+title: "SCEG-HiC on paired scRNA-seq and scATAC-seq data of PBMC-CD4T"
+author: "XuanLiang"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/picb/bigdata/project/liangxuan/data/human/pbmc")
+options(future.globals.maxSize = 20 * 1024^3)
+```
+
+In this vignette,we’ll demonstrate  SCEG-HiC’s capability of inferring gene-enhancer by applying it to paired scRNA-seq and scATAC-seq data. In this vignette we'll be using a publicly available 10x Genomic Multiome dataset for human PBMCs,and only select CD4 T cells for processing
+
+Ok, so let’s get started. First we need a Seurat object that has paired scRNA-seq and scATAC-seq data, respectively. Here we use multiome data from human PBMCs, processed as demonstrated in the [SCEG-HiC on paired scRNA-seq and scATAC-seq data of PBMC-aggregate](https://wuwei77lx.github.io/SCEGHiC/articles/pbmc_multiomic_aggregrate.html).
+
+The implementent of SCEG-HiC is seamlessly compatible with the workflow of Seurat/Signac package, SCEG-HiC pipeline consists of the following four major parts:
+
+* Infer gene-enhancer using SCEG-HiC by taking as input input a Seurat object and the bulk average Hi-C.
+* Visualize the gene-enhancer.
+
+## Load the required libraries
+```{r message=FALSE, warning=FALSE}
+library(SCEGHiC)
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+```
+
+## Infer gene-enhancer using SCEG-HiC 
+
+### Preprocess data
+Here, we only select CD8 T cells with paired scRNA-seq and scATAC-seq data.By default, the scATAC-seq counts are binarized.
+```{r}
+# load data
+load("pbmc_multiomic.rda")
+SCEGdata <- process_data(pbmc, aggregate = FALSE, celltype = "CD4 T", rna_assay = "SCT")
+```
+### Calculate weight
+SCEG-HiC takes a long time to calculate weight, and the process becomes slower as more genes are selected. SCEG-HiC provides download websites for the average Hi-C data for both humans and mice. In this case, we select the human average Hi-C data for analysis.
+
+```{r }
+# For example, Calculate weight for CD4 T's markers: GLB1
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = "GLB1", averHicPath = "/picb/bigdata/project/liangxuan/data/human_contact/AvgHiC")
+```
+### Run model
+SCEG HiC uses wglasso machine learning method and normalizes the bulk average Hi-C matrix using rank score.
+```{r }
+# For example, Run model for CD4 T's markers: GLB1
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = "GLB1")
+```
+
+## Visualize the gene-enhancer 
+
+### Visualize the links
+
+```{r,fig.width = 8, fig.height = 5,message=FALSE,warning=FALSE}
+temp <- tempfile()
+download.file("https://hgdownload2.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.refGene.gtf.gz", temp)
+gene_anno <- rtracklayer::readGFF(temp)
+unlink(temp)
+# rename some columns to match requirements
+gene_anno$chromosome <- gene_anno$seqid
+gene_anno$gene <- gene_anno$gene_id
+gene_anno$transcript <- gene_anno$transcript_id
+gene_anno$symbol <- gene_anno$gene_name
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "GLB1", cutoff = 0.001, gene_anno = gene_anno)
+```
+
+<details>
+  <summary>**Session Info**</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>
