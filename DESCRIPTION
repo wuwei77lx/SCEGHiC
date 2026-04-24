@@ -1,6 +1,6 @@
 Package: SCEGHiC
 Title: Predicting Single-cell Enhancer Gene Interactions by Integrating Prior Hi-C Information
-Version: 0.0.0.9000
+Version: 1.0.1
 Authors@R: c(
     person(given = 'Xuan', family = 'Liang', email = 'liangxuan2022@sinh.ac.cn', role = c('aut', 'cre')),
     person(given = 'Zhen', family = 'Wang', email = 'zwang01@sibs.ac.cn', role = c('ctb','ths'))
