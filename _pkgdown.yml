@@ -1,0 +1,75 @@
+url: https://wuwei77lx.github.io/SCEGHiC/
+template:
+  bootstrap: 5
+  bootswatch: cosmo
+  bslib:
+    primary: "#A6A6A6"
+  params:
+    ganalytics: UA-119440867-11
+    highlightcss: false
+
+development:
+  mode: auto
+
+navbar:
+  title: "SCEG-HiC"
+  left:
+    - text: "Vignettes"
+      menu:
+        - text: "SCEG-HiC on paired scATAC-seq/RNA-seq data of PBMC (aggregation)"
+          href: articles/PBMC_multiomic_aggregation.html
+        - text: "SCEG-HiC on paired scATAC-seq/RNA-seq data of PBMC-CD4T"
+          href: articles/PBMC_multiomic_CD4T.html
+        - text: "SCEG-HiC on paired scATAC-seq/RNA-seq data of mouse skin (aggregation)"
+          href: articles/mouse_skin_multiomic_aggregation.html
+        - text: "SCEG-HiC on scATAC-seq data alone from human COVID-19 monocytes"
+          href: articles/human_covid_19_scATAC_seq_monocytes.html
+    - text: "Reference"
+      href: reference/index.html
+    - text: "Discussions"
+      href: https://github.com/wuwei77lx/SCEGHiC/discussions
+  right:
+    - icon: fa-github
+      href: https://github.com/wuwei77lx/SCEGHiC
+
+reference:
+  - title: Preprocess data
+    desc: >
+    contents:
+      - process_data
+      - Aggregate_datasets
+      - generate_aggregated_datasets
+      - estimateSizeFactorsForMatrix
+      - asSlamMatrix
+      - isSparseMatrix
+      - estimateSizeFactorsForSparseMatrix
+      - estimateSizeFactorsForDenseMatrix
+      - estimate_t
+      - dmode
+
+  - title: Calculate weight
+    desc: >
+    contents:
+      - calculateHiCWeights
+      - annotateTSS
+      - liftOverPeaks
+  - title: Run model
+    desc: >
+    contents:
+      - Run_SCEG_HiC
+      - normalizeHiCWeights
+      - wglasso
+  - title: Visualize the gene-enhancer
+    desc: >
+    contents:
+      - connections_Plot
+      - coverPlot
+      - LinksPlot
+  - title: data
+    desc: >
+    contents:
+      - hg19TSSdata
+      - hg38TSSdata
+      - mm10TSSdata
+      - mm9TSSdata
+      - multiomic_small
