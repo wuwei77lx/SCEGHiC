@@ -1,7 +1,7 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# SCEG-HiC <img src="inst/figures/logo.png" align="right" width="150" />
+# SCEG-HiC <img src="inst/figures/logo.png" align="right" width="120" />
 
 <!-- badges: start -->
 
