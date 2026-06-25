@@ -13,14 +13,13 @@ knitr::opts_chunk$set(
 )
 ```
 
-
-# SCEG-HiC  <img src="inst/figures/logo.png" align="right" width="120" />
-
+# SCEG-HiC  <img src="inst/figures/logo.png" align="right" width="110" />
 
 
 <!-- badges: start -->
 <!-- badges: end -->
 ## Overview
+
 SCEG-HiC predicts enhancer–gene links by integrating multi-omics single-cell data (either paired scATAC-seq/RNA-seq or scATAC-seq alone) with three-dimensional chromatin conformation information derived from bulk average Hi-C data. It employs the weighted graphical lasso (wglasso) model to incorporate average bulk Hi-C data, effectively regularizing the correlation matrix with the prior Hi-C contact matrix as a penalty term.
 
 ## Installation
