@@ -7,6 +7,10 @@ template:
   params:
     ganalytics: UA-119440867-11
     highlightcss: false
+  assets:
+    - pkgdown/assets
+
+favicon: man/figures/logo.png
 
 development:
   mode: auto

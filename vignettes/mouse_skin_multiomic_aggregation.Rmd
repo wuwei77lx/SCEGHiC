@@ -145,7 +145,6 @@ skin[["ATAC"]] <- CreateChromatinAssay(
   counts = peak.count,
   sep = c(":", "-"),
   fragments = fragpath,
-  genome = "mm10",
   annotation = annotations
 )
 
