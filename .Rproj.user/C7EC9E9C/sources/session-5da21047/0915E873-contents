@@ -1,0 +1,25 @@
+library(SCEGHiC)
+library(Signac)
+## basic example code
+data(multiomic_small)
+
+# Preprocess data
+SCEGdata <- process_data(multiomic_small, k_neigh = 5, max_overlap = 0.5)
+
+gene=multiomic_small@assays[["RNA"]]@data@Dimnames[[1]]
+fpath <- system.file("extdata",package = "SCEGHiC")
+
+# Calculate weight
+weight <- calculateHiCWeights(SCEGdata, species = "Homo sapiens", genome = "hg38", focus_gene = gene, averHicPath = fpath)
+
+# Run model
+results_SCEGHiC <- Run_SCEG_HiC(SCEGdata, weight, focus_gene = gene)
+
+# Visualize the links
+connections_Plot(results_SCEGHiC, species = "Homo sapiens", genome = "hg38", focus_gene = "CTLA4", cutoff = 0.01, gene_anno = NULL)
+
+# Coverage plot and visualize the links of CTLA4
+fpath <- system.file("extdata", "multiomic_small_atac_fragments.tsv.gz", package = "SCEGHiC")
+frags <- CreateFragmentObject(path = fpath, cells = colnames(multiomic_small))
+Fragments(multiomic_small) <- frags
+coverPlot(multiomic_small, focus_gene = "CTLA4", species = "Homo sapiens", genome = "hg38", assay = "peaks", SCEG_HiC_Result = results_SCEGHiC, SCEG_HiC_cutoff = 0.01)

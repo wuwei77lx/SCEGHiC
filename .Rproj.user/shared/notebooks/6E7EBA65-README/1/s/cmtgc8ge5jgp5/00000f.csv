@@ -1,0 +1,6 @@
+"0","#Calculate weight
+weight<-calculateHiCWeights(SCEGdata, species=""Homo sapiens"", genome=""hg38"", focus_gene=gene,  averHicPath=fpath)
+"
+"2","Error in .local(con, format, text, ...) : 
+  cannot open file 'C:/Users/86177/Documents/SCEG/SCEGHiC/extdata/hg38ToHg19.over.chain'
+"

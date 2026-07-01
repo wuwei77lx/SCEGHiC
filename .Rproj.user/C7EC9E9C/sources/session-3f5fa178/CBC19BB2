@@ -1,0 +1,26 @@
+{
+    "id": "CBC19BB2",
+    "path": "~/SCEG/SCEGHiC/R/model.R",
+    "project_path": "R/model.R",
+    "type": "r_source",
+    "hash": "491830643",
+    "contents": "",
+    "dirty": false,
+    "created": 1737471944989.0,
+    "source_on_save": false,
+    "relative_order": 13,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "27,45",
+        "scrollLine": "7"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737472348,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737472348478,
+    "read_only": false,
+    "read_only_alternatives": []
+}

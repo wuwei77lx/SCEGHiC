@@ -1,0 +1,100 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+```
+
+# SCEG-HiC(predicting single-cell enhancer gene interactions by integrating prior Hi-C information)
+
+<!-- badges: start -->
+<!-- badges: end -->
+## Overview
+SCEG-HiC predicts interactions between genes and enhancers using multi-ome (paired scRNA-seq and scATAC-seq or only scATAC-seq) 
+sequencing data and three-dimensional omics data (the bulk average Hi-C). The approach uses weighted graphical lasso (wlasso) model, 
+taking the average Hi-C data as prior knowledge, to predict cell specific interactions between genes and enhancers based on the 
+correlation between genes and enhancers.
+
+## Installation
+
+### Required software
+
+SCEG-HiC runs in the [R statistical computing environment](https://www.r-project.org/). You will need R version 4.1.0 or higher, [Bioconductor](https://bioconductor.org/) version 3.14 or higher, and Seurat 4.0 or higher to have access to the latest features.
+
+To install Bioconductor, open R and run:
+
+``` r
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+```
+
+Next, install a few Bioconductor dependencies that aren't automatically installed:
+
+``` r
+BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+                       'limma', 'lme4', 'S4Vectors', 'SingleCellExperiment',
+                       'SummarizedExperiment', 'batchelor', 'HDF5Array',
+                       'terra', 'ggrastr','Gviz', 'rtracklayer','GenomeInfoDb','GenomicRanges'))
+```
+
+Installation of other dependencies
+
+- Install Signac pacakge : ```devtools::install_github("timoast/signac", ref = "develop")```. Please check [here](https://satijalab.org/signac/articles/install.html#development-version-1) if you encounter any issue.
+- Install Cicero package: ```devtools::install_github("cole-trapnell-lab/cicero-release", ref = "monocle3")```. Please check [here](https://cole-trapnell-lab.github.io/cicero-release/docs_m3/#installing-cicero) if you encounter any issue.
+
+Now, you can install the development version of SCEG-HiC from [GitHub](https://github.com/) with:
+
+``` r
+# install.packages("devtools")
+devtools::install_github("wuwei77lx/SCEGHiC")
+```
+
+If you wish to install CRAN of SCEG-HiC, execute:
+
+```r
+# Install released version from CRAN
+install.packages("SCEGHiC")
+```
+### Testing the installation
+
+To ensure that SCEG-HiC was installed correctly, start a new R session and run:
+
+```{r message=FALSE,warning=FALSE}
+library(SCEGHiC)
+```
+
+## Quickstart
+
+This is a basic example which shows you how to solve a common problem:
+
+```{r example}
+library(SCEGHiC)
+## basic example code
+```
+
+See [documentation website](https://github.com/wuwei77lx/SCEGHiC/) for more information!
+
+## Example
+For more information about how this package has been used with real data,
+please check the following links:
+
+- [Demo of SCEG-HiC on paired scRNA-seq and scATAC-seq data of PBMC-aggregate](https://htmlpreview.github.io/?https://github.com/zhanglhbioinfor/DIRECT-NET/blob/main/tutorial/demo_DIRECTNET_PBMC.html)
+
+- [Demo of SCEG-HiC on paired scRNA-seq and scATAC-seq data of PBMC-CD4T](https://htmlpreview.github.io/?https://github.com/zhanglhbioinfor/DIRECT-NET/blob/main/tutorial/demo_DIRECTNET_A549.html)
+
+- [Demo of SCEG-HiC on paired scRNA-seq and scATAC-seq data of mouse skin-aggregate](https://htmlpreview.github.io/?https://github.com/zhanglhbioinfor/DIRECT-NET/blob/main/tutorial/demo_DIRECTNET_GM12878.html)
+
+- [Demo of SCEG-HiC on only scATAC-seq data of human COVID 19-Mono](https://htmlpreview.github.io/?https://github.com/zhanglhbioinfor/DIRECT-NET/blob/main/tutorial/demo_DIRECTNET_Brain.html)
+
+## Help
+
+If you have any problems, comments or suggestions, please contact us at XuanLiang (liangxuan2022@sinh.ac.cn).

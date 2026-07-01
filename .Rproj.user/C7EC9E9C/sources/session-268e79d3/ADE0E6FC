@@ -1,0 +1,26 @@
+{
+    "id": "ADE0E6FC",
+    "path": "~/SCEG/SCEGHiC/R/visualization.R",
+    "project_path": "R/visualization.R",
+    "type": "r_source",
+    "hash": "1214310268",
+    "contents": "",
+    "dirty": false,
+    "created": 1737512821897.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "255,27",
+        "scrollLine": "248"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1737516087,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1737516087582,
+    "read_only": false,
+    "read_only_alternatives": []
+}
